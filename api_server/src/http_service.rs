@@ -27,6 +27,8 @@ use vmm::vmm_config::logger::LoggerConfig;
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::net::{NetworkInterfaceConfig, NetworkInterfaceUpdateConfig};
 use vmm::vmm_config::vsock::VsockDeviceConfig;
+#[cfg(feature = "vtfs")]
+use vmm::vmm_config::vtfs::VtfsDeviceConfig;
 
 fn build_response_base<B: Into<hyper::Body>>(
     status: StatusCode,
@@ -380,6 +382,35 @@ fn parse_vsock_req<'a>(path: &'a str, method: Method, body: &Chunk) -> Result<'a
     }
 }
 
+#[cfg(feature = "vtfs")]
+// Turns a GET/PUT /vtfs HTTP request into a ParsedRequest.
+fn parse_vtfs_req<'a>(path: &'a str, method: Method, body: &Chunk) -> Result<'a, ParsedRequest> {
+    let path_tokens: Vec<&str> = path[1..].split_terminator('/').collect();
+    let id_from_path = if path_tokens.len() > 1 {
+        checked_id(path_tokens[1])?
+    } else {
+        return Err(Error::EmptyID);
+    };
+
+    match path_tokens[1..].len() {
+        1 if method == Method::Put => {
+            METRICS.put_api_requests.drive_count.inc();
+
+            let vtfs_cfg = serde_json::from_slice::<VtfsDeviceConfig>(body).map_err(|e| {
+                METRICS.put_api_requests.drive_fails.inc();
+                Error::SerdeJson(e)
+            })?;
+            Ok(vtfs_cfg
+                .into_parsed_request(Some(id_from_path.to_string()), method)
+                .map_err(|s| {
+                    METRICS.put_api_requests.drive_fails.inc();
+                    Error::Generic(StatusCode::BadRequest, s)
+                })?)
+        }
+        _ => Err(Error::InvalidPathMethod(path, method)),
+    }
+}
+
 // This turns an incoming HTTP request into a ParsedRequest, which is an item containing both the
 // message to be passed to the VMM, and associated entities, such as channels which allow the
 // reception of the response back from the VMM.
@@ -426,6 +457,8 @@ fn parse_request<'a>(method: Method, path: &'a str, body: &Chunk) -> Result<'a, 
         "network-interfaces" => parse_netif_req(path, method, body),
         "mmds" => parse_mmds_request(path, method, body),
         "vsock" => parse_vsock_req(path, method, body),
+        #[cfg(feature = "vtfs")]
+        "vtfs" => parse_vtfs_req(path, method, body),
         _ => Err(Error::InvalidPathMethod(path, method)),
     }
 }

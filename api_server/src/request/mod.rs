@@ -8,6 +8,8 @@ pub mod logger;
 pub mod machine_configuration;
 pub mod net;
 pub mod vsock;
+#[cfg(feature = "vtfs")]
+pub mod vtfs;
 
 use serde_json::Value;
 use std::result;

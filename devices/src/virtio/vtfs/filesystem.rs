@@ -40,6 +40,8 @@ const FUSE_INIT_FLAGS: u32 = FUSE_ASYNC_READ | FUSE_NO_OPENDIR_SUPPORT;
 const FUSE_DEFAULT_MAX_BACKGROUND: u16 = 12;
 const FUSE_DEFAULT_CONGESTION_THRESHOLD: u16 = (FUSE_DEFAULT_MAX_BACKGROUND * 3 / 4);
 
+type Result<T> = result::Result<T, ExecuteError>;
+
 #[derive(Debug)]
 pub enum VtfsError {
     /// Guest gave us bad memory addresses.
@@ -95,7 +97,7 @@ impl<'a> Request<'a> {
     }
 
     #[allow(non_upper_case_globals)]
-    pub fn execute(&self, fs: &mut FuseBackend) -> result::Result<u32, ExecuteError> {
+    pub fn execute(&self, fs: &mut FuseBackend) -> Result<u32> {
         match self.in_header.opcode {
             fuse_opcode_FUSE_INIT => fs.do_init(self),
             fuse_opcode_FUSE_GETATTR => fs.do_getattr(self),
@@ -282,7 +284,7 @@ impl InodeHandler {
         })
     }
 
-    fn lookup(&self, path: &CStr) -> result::Result<InodeHandler, ExecuteError> {
+    fn lookup(&self, path: &CStr) -> Result<InodeHandler> {
         let oflag = libc::O_PATH | libc::O_NOFOLLOW;
         let new_fd = openat(self.fd, Some(path), oflag)?;
 
@@ -298,21 +300,21 @@ impl InodeHandler {
         })
     }
 
-    fn metadata(&self) -> result::Result<FileStat, ExecuteError> {
+    fn metadata(&self) -> Result<FileStat> {
         let at_flag = libc::AT_EMPTY_PATH | libc::AT_SYMLINK_NOFOLLOW;
         fstatat(self.fd, None, at_flag).map_err(|e| ExecuteError::from(e))
     }
 
-    fn opendir(&self) -> result::Result<Dir, ExecuteError> {
+    fn opendir(&self) -> Result<Dir> {
         let oflg = libc::O_RDONLY;
         Dir::openat(self.fd, None, oflg).map_err(|e| ExecuteError::from(e))
     }
 
-    fn fstatvfs(&self) -> result::Result<Statvfs, ExecuteError> {
+    fn fstatvfs(&self) -> Result<Statvfs> {
         fstatvfs(self.as_raw_fd()).map_err(|e| ExecuteError::from(e))
     }
 
-    fn mknod(&self, name: &CStr, mode: mode_t, dev: dev_t) -> result::Result<(), ExecuteError> {
+    fn mknod(&self, name: &CStr, mode: mode_t, dev: dev_t) -> Result<()> {
         mknodat(self.fd, name, mode, dev).map_err(|e| ExecuteError::from(e))
     }
 }
@@ -378,7 +380,7 @@ impl InodeMap {
         }
     }
 
-    fn get(&self, ino: u64) -> result::Result<&InodeHandler, ExecuteError> {
+    fn get(&self, ino: u64) -> Result<&InodeHandler> {
         self.ino_map.get(&ino).ok_or(ExecuteError::UnknownHandle)
     }
 }
@@ -412,7 +414,7 @@ impl<V> FDMap<V> {
     //     self.map.get(&key)
     // }
 
-    fn get_mut(&mut self, key: u64) -> result::Result<&mut V, ExecuteError> {
+    fn get_mut(&mut self, key: u64) -> Result<&mut V> {
         self.map.get_mut(&key).ok_or(ExecuteError::UnknownHandle)
     }
 }
@@ -434,7 +436,7 @@ impl FuseBackend {
         })
     }
 
-    pub fn do_init(&self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_init(&self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
         let in_arg: fuse_init_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
@@ -450,7 +452,7 @@ impl FuseBackend {
         Ok(request.send_arg(out_arg))
     }
 
-    pub fn do_getattr(&self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_getattr(&self, request: &Request) -> Result<u32> {
         // not use fuse_getattr_in
         let ino = request.in_header.nodeid;
 
@@ -485,13 +487,13 @@ impl FuseBackend {
         Ok(request.send_arg(out_arg))
     }
 
-    pub fn do_forget(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_forget(&mut self, request: &Request) -> Result<u32> {
         self.ino_map.remove(request.in_header.nodeid);
 
         Ok(0)
     }
 
-    pub fn do_lookup(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_lookup(&mut self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
         let mut buf = vec![0u8; request.in_arg_len as usize];
 
@@ -541,7 +543,7 @@ impl FuseBackend {
         Ok(request.send_arg(out_arg))
     }
 
-    pub fn do_readdir(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_readdir(&mut self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
         let in_arg: fuse_read_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
@@ -558,7 +560,7 @@ impl FuseBackend {
         Ok(request.send_dirent_vec(out_arg))
     }
 
-    pub fn do_opendir(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_opendir(&mut self, request: &Request) -> Result<u32> {
         let ino = request.in_header.nodeid;
         let ino_fd = self.ino_map.get(ino)?;
 
@@ -574,7 +576,7 @@ impl FuseBackend {
         Ok(request.send_arg(out_arg))
     }
 
-    pub fn do_releasedir(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_releasedir(&mut self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
         let in_arg: fuse_release_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
@@ -584,7 +586,7 @@ impl FuseBackend {
         Ok(request.send_err(0))
     }
 
-    pub fn do_statfs(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_statfs(&mut self, request: &Request) -> Result<u32> {
         let ino = request.in_header.nodeid;
         let ino_fd = self.ino_map.get(ino)?;
 
@@ -607,11 +609,11 @@ impl FuseBackend {
         Ok(request.send_arg(out_arg))
     }
 
-    pub fn do_access(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_access(&mut self, request: &Request) -> Result<u32> {
         Ok(request.send_err(libc::ENOSYS))
     }
 
-    pub fn do_mknod(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_mknod(&mut self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
         let in_arg: fuse_mknod_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
@@ -676,28 +678,18 @@ impl FuseBackend {
         Ok(request.send_arg(out_arg))
     }
 
-    pub fn do_mkdir(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
-        let guest_mem = request.memory;
-        let in_arg: fuse_mkdir_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
+    fn create_new_entry<F>(&mut self, uid: uid_t, gid: gid_t, f: F) -> Result<fuse_entry_out>
+    where
+        F: FnOnce() -> Result<InodeHandler>,
+    {
+        let new_fd = f()?;
+        if uid != 0 || gid != 0 {
+            fchown(new_fd.as_raw_fd(), uid, gid).map_err(|e| {
+                let _ = unlinkat(new_fd.as_raw_fd(), None, libc::AT_REMOVEDIR);
+                e
+            })?;
+        }
 
-        let name_len = request.in_arg_len as usize - mem::size_of_val(&in_arg);
-
-        let mut buf = vec![0u8; name_len];
-
-        let pos = request.in_arg_addr.unchecked_add(mem::size_of_val(&in_arg));
-        guest_mem.read_slice_at_addr(&mut buf, pos)?;
-        let name = CStr::from_bytes_with_nul(&buf)?;
-
-        let mode = in_arg.mode | libc::S_IFDIR;
-
-        let ino = request.in_header.nodeid;
-        let ino_fd = self.ino_map.get(ino)?;
-
-        with_cred(request.in_header.uid, request.in_header.gid, || {
-            mkdirat(ino_fd.as_raw_fd(), name, mode)
-        })?;
-
-        let new_fd = ino_fd.lookup(name)?;
         let filestat = new_fd.metadata()?;
         let cached_ino = self.ino_map.identify(new_fd);
 
@@ -720,7 +712,7 @@ impl FuseBackend {
             padding: 0,
         };
 
-        let out_arg = fuse_entry_out {
+        Ok(fuse_entry_out {
             nodeid: attr.ino,
             generation: 0,
             entry_valid: 0,
@@ -728,12 +720,77 @@ impl FuseBackend {
             entry_valid_nsec: 0,
             attr_valid_nsec: 0,
             attr: attr,
-        };
+        })
+    }
+
+    fn get_fd(&mut self, ino: u64) -> Result<&InodeHandler> {
+        self.ino_map.get(ino)
+    }
+
+    pub fn do_mkdir(&mut self, request: &Request) -> Result<u32> {
+        let guest_mem = request.memory;
+        let in_arg: fuse_mkdir_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
+
+        let name_len = request.in_arg_len as usize - mem::size_of_val(&in_arg);
+
+        let mut buf = vec![0u8; name_len];
+
+        let pos = request.in_arg_addr.unchecked_add(mem::size_of_val(&in_arg));
+        guest_mem.read_slice_at_addr(&mut buf, pos)?;
+        let name = CStr::from_bytes_with_nul(&buf)?;
+
+        let mode = in_arg.mode | libc::S_IFDIR;
+
+        // let ino = request.in_header.nodeid;
+        let ino_fd = self.get_fd(request.in_header.nodeid)?;
+
+        // with_cred(request.in_header.uid, request.in_header.gid, || {
+        //     mkdirat(ino_fd.as_raw_fd(), name, mode)
+        // })?;
+
+                mkdirat(ino_fd.as_raw_fd(), name, mode)?;
+                let n = ino_fd.lookup(name);
+        let out_arg =
+            self.create_new_entry(request.in_header.uid, request.in_header.gid, || { n
+            })?;
+
+        // let new_fd = ino_fd.lookup(name)?;
+        // let filestat = new_fd.metadata()?;
+        // let cached_ino = self.ino_map.identify(new_fd);
+
+        // let attr = fuse_attr {
+        //     ino: cached_ino,
+        //     size: filestat.st_size asl u64,
+        //     blocks: filestat.st_size as u64,
+        //     atime: filestat.st_atime as u64,
+        //     mtime: filestat.st_mtime as u64,
+        //     ctime: filestat.st_ctime as u64,
+        //     atimensec: filestat.st_atime_nsec as u32,
+        //     mtimensec: filestat.st_mtime_nsec as u32,
+        //     ctimensec: filestat.st_ctime_nsec as u32,
+        //     mode: filestat.st_mode,
+        //     nlink: filestat.st_nlink as u32,
+        //     uid: filestat.st_uid,
+        //     gid: filestat.st_gid,
+        //     rdev: filestat.st_rdev as u32,
+        //     blksize: filestat.st_blksize as u32,
+        //     padding: 0,
+        // };
+
+        // let out_arg = fuse_entry_out {
+        //     nodeid: attr.ino,
+        //     generation: 0,
+        //     entry_valid: 0,
+        //     attr_valid: 0,
+        //     entry_valid_nsec: 0,
+        //     attr_valid_nsec: 0,
+        //     attr: attr,
+        // };
 
         Ok(request.send_arg(out_arg))
     }
 
-    pub fn do_rmdir(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_rmdir(&mut self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
         let mut buf = vec![0u8; request.in_arg_len as usize];
 
@@ -744,13 +801,13 @@ impl FuseBackend {
         let ino = request.in_header.nodeid;
         let ino_fd = self.ino_map.get(ino)?;
 
-        unlinkat(ino_fd.as_raw_fd(), name, libc::AT_REMOVEDIR)?;
+        unlinkat(ino_fd.as_raw_fd(), Some(name), libc::AT_REMOVEDIR)?;
 
         // self.ino_map.remove(ino);
         Ok(request.send_err(0))
     }
 
-    pub fn do_setattr(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_setattr(&mut self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
         let in_arg: fuse_setattr_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
@@ -813,7 +870,7 @@ impl FuseBackend {
         Ok(request.send_arg(out_arg))
     }
 
-    pub fn do_unlink(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_unlink(&mut self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
         let mut buf = vec![0u8; request.in_arg_len as usize];
 
@@ -824,12 +881,12 @@ impl FuseBackend {
         let ino = request.in_header.nodeid;
         let ino_fd = self.ino_map.get(ino)?;
 
-        unlinkat(ino_fd.as_raw_fd(), name, 0)?;
+        unlinkat(ino_fd.as_raw_fd(), Some(name), 0)?;
 
         Ok(request.send_err(0))
     }
 
-    pub fn do_symlink(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_symlink(&mut self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
         let mut buf = vec![0u8; request.in_arg_len as usize];
         guest_mem.read_slice_at_addr(&mut buf, request.in_arg_addr)?;
@@ -881,7 +938,7 @@ impl FuseBackend {
         Ok(request.send_arg(out_arg))
     }
 
-    pub fn do_readlink(&mut self, request: &Request) -> result::Result<u32, ExecuteError> {
+    pub fn do_readlink(&mut self, request: &Request) -> Result<u32> {
         let ino = request.in_header.nodeid;
         let ino_fd = self.ino_map.get(ino)?;
 

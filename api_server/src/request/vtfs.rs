@@ -1,18 +1,6 @@
 // Copyright 2019 UCloud.cn, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// use std::result;
-
-// use futures::sync::oneshot;
-// use hyper::Method;
-
-// use request::{IntoParsedRequest, ParsedRequest};
-// use super::{VmmAction, VmmRequest};
-
-// use super::super::VmmAction;
-// use request::{Body, Error, ParsedRequest};
-// use vmm::vmm_config::vsock::VsockDeviceConfig;
-
 use super::super::VmmAction;
 use request::{checked_id, Body, Error, ParsedRequest, StatusCode};
 use vmm::vmm_config::vtfs::VtfsDeviceConfig;

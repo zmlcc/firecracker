@@ -136,8 +136,9 @@ pub fn fchown(dirfd: RawFd, owner: uid_t, group: gid_t) -> Result<()> {
     libc_result!(unsafe { libc::fchown(dirfd, owner, group) })
 }
 
-pub fn unlinkat(dirfd: RawFd, name: &CStr, flag: c_int) -> Result<()> {
-    libc_result!(unsafe { libc::unlinkat(dirfd, name.as_ptr(), flag) })
+pub fn unlinkat(dirfd: RawFd, name: Option<&CStr>, flag: c_int) -> Result<()> {
+    let name_c = name.unwrap_or(Default::default()).as_ptr();
+    libc_result!(unsafe { libc::unlinkat(dirfd, name_c, flag) })
 }
 
 pub fn symlinkat(dirfd: RawFd, linkpath: &CStr, target: &CStr) -> Result<()> {

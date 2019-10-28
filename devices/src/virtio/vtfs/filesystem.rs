@@ -12,7 +12,7 @@ use std::os::unix::io::RawFd;
 use std::ffi::{CStr, CString};
 use sys_util::fs::{
     close, fchmod, fchown, fstatat, fstatvfs, mkdirat, mknodat, open, openat, readlinkat,
-    symlinkat, unlinkat, with_cred,
+    symlinkat, unlinkat, linkat
 };
 
 use sys_util::fs::Dir;
@@ -98,7 +98,7 @@ impl<'a> Request<'a> {
 
     #[allow(non_upper_case_globals)]
     pub fn execute(&self, fs: &mut FuseBackend) -> Result<u32> {
-        match self.in_header.opcode {
+        let ret = match self.in_header.opcode {
             fuse_opcode_FUSE_INIT => fs.do_init(self),
             fuse_opcode_FUSE_GETATTR => fs.do_getattr(self),
             fuse_opcode_FUSE_LOOKUP => fs.do_lookup(self),
@@ -115,12 +115,16 @@ impl<'a> Request<'a> {
             fuse_opcode_FUSE_UNLINK => fs.do_unlink(self),
             fuse_opcode_FUSE_SYMLINK => fs.do_symlink(self),
             fuse_opcode_FUSE_READLINK => fs.do_readlink(self),
+            fuse_opcode_FUSE_LINK => fs.do_link(self),
             _ => Err(ExecuteError::InvalidMethod),
-        }
+        };
+        error!("FUCK EXEC {:?}", ret);
+        ret
     }
 
     #[allow(non_upper_case_globals)]
     fn check_chain(&mut self, avail_desc: &DescriptorChain) -> result::Result<(), VtfsError> {
+        error!("FUCK OPCODE {}", self.in_header.opcode);
         match self.in_header.opcode {
             // only in_header
             fuse_opcode_FUSE_FORGET => {
@@ -380,6 +384,10 @@ impl InodeMap {
         }
     }
 
+    fn id22222(&self, inode: &InodeHandler) -> Option<u64> {
+        self.attr_map.get(&inode.host_inode).map(|i| {*i})
+    }
+
     fn get(&self, ino: u64) -> Result<&InodeHandler> {
         self.ino_map.get(&ino).ok_or(ExecuteError::UnknownHandle)
     }
@@ -626,70 +634,16 @@ impl FuseBackend {
         buf[name_len - 1] = 0u8;
         let name = CStr::from_bytes_with_nul(&buf)?;
 
-        let ino = request.in_header.nodeid;
-        let ino_fd = self.ino_map.get(ino)?;
+        let ino_fd = self.ino_map.get(request.in_header.nodeid)?;
 
-        match in_arg.mode & libc::S_IFMT {
-            libc::S_IFDIR => {
-                // TODO:
-                mkdirat(ino_fd.as_raw_fd(), name, in_arg.mode)?;
-            }
-            libc::S_IFLNK => {
-                // TODO:
-            }
-            _ => {
-                ino_fd.mknod(name, in_arg.mode, in_arg.rdev as dev_t)?;
-            }
-        }
+        ino_fd.mknod(name, in_arg.mode, in_arg.rdev as dev_t)?;
 
         let new_fd = ino_fd.lookup(name)?;
-        let filestat = new_fd.metadata()?;
-        let cached_ino = self.ino_map.identify(new_fd);
-
-        let attr = fuse_attr {
-            ino: cached_ino,
-            size: filestat.st_size as u64,
-            blocks: filestat.st_size as u64,
-            atime: filestat.st_atime as u64,
-            mtime: filestat.st_mtime as u64,
-            ctime: filestat.st_ctime as u64,
-            atimensec: filestat.st_atime_nsec as u32,
-            mtimensec: filestat.st_mtime_nsec as u32,
-            ctimensec: filestat.st_ctime_nsec as u32,
-            mode: filestat.st_mode,
-            nlink: filestat.st_nlink as u32,
-            uid: filestat.st_uid,
-            gid: filestat.st_gid,
-            rdev: filestat.st_rdev as u32,
-            blksize: filestat.st_blksize as u32,
-            padding: 0,
-        };
-
-        let out_arg = fuse_entry_out {
-            nodeid: attr.ino,
-            generation: 0,
-            entry_valid: 0,
-            attr_valid: 0,
-            entry_valid_nsec: 0,
-            attr_valid_nsec: 0,
-            attr: attr,
-        };
-
+        let out_arg = self.cccc(&request.in_header, new_fd)?;
         Ok(request.send_arg(out_arg))
     }
 
-    fn create_new_entry<F>(&mut self, uid: uid_t, gid: gid_t, f: F) -> Result<fuse_entry_out>
-    where
-        F: FnOnce() -> Result<InodeHandler>,
-    {
-        let new_fd = f()?;
-        if uid != 0 || gid != 0 {
-            fchown(new_fd.as_raw_fd(), uid, gid).map_err(|e| {
-                let _ = unlinkat(new_fd.as_raw_fd(), None, libc::AT_REMOVEDIR);
-                e
-            })?;
-        }
-
+    fn gen_ino_attr(&mut self, new_fd: InodeHandler) -> Result<fuse_entry_out> {
         let filestat = new_fd.metadata()?;
         let cached_ino = self.ino_map.identify(new_fd);
 
@@ -723,8 +677,55 @@ impl FuseBackend {
         })
     }
 
-    fn get_fd(&mut self, ino: u64) -> Result<&InodeHandler> {
-        self.ino_map.get(ino)
+    fn get_ino_attr(&self, fd: &InodeHandler) -> Result<fuse_entry_out> {
+        let filestat = fd.metadata()?;
+        let cached_ino = self.ino_map.id22222(fd).ok_or(ExecuteError::UnknownHandle)?;
+
+        let attr = fuse_attr {
+            ino: cached_ino,
+            size: filestat.st_size as u64,
+            blocks: filestat.st_size as u64,
+            atime: filestat.st_atime as u64,
+            mtime: filestat.st_mtime as u64,
+            ctime: filestat.st_ctime as u64,
+            atimensec: filestat.st_atime_nsec as u32,
+            mtimensec: filestat.st_mtime_nsec as u32,
+            ctimensec: filestat.st_ctime_nsec as u32,
+            mode: filestat.st_mode,
+            nlink: filestat.st_nlink as u32,
+            uid: filestat.st_uid,
+            gid: filestat.st_gid,
+            rdev: filestat.st_rdev as u32,
+            blksize: filestat.st_blksize as u32,
+            padding: 0,
+        };
+
+        Ok(fuse_entry_out {
+            nodeid: attr.ino,
+            generation: 0,
+            entry_valid: 0,
+            attr_valid: 0,
+            entry_valid_nsec: 0,
+            attr_valid_nsec: 0,
+            attr: attr,
+        })
+    }
+
+    fn adjust_cred(req: &fuse_in_header, new_fd: &InodeHandler) -> Result<()> {
+        let (uid, gid) = (req.uid, req.gid);
+        if uid == 0 && gid == 0 {
+            return Ok(());
+        }
+        fchown(new_fd.as_raw_fd(), uid, gid).map_err(|e| {
+            let _ = unlinkat(new_fd.as_raw_fd(), None, libc::AT_REMOVEDIR);
+            ExecuteError::from(e)
+        })
+    }
+
+    fn cccc(&mut self, req: &fuse_in_header, new_fd: InodeHandler) -> Result<fuse_entry_out> {
+        Self::adjust_cred(req, &new_fd)?;
+
+        self.gen_ino_attr(new_fd)
     }
 
     pub fn do_mkdir(&mut self, request: &Request) -> Result<u32> {
@@ -741,51 +742,10 @@ impl FuseBackend {
 
         let mode = in_arg.mode | libc::S_IFDIR;
 
-        // let ino = request.in_header.nodeid;
-        let ino_fd = self.get_fd(request.in_header.nodeid)?;
-
-        // with_cred(request.in_header.uid, request.in_header.gid, || {
-        //     mkdirat(ino_fd.as_raw_fd(), name, mode)
-        // })?;
-
-                mkdirat(ino_fd.as_raw_fd(), name, mode)?;
-                let n = ino_fd.lookup(name);
-        let out_arg =
-            self.create_new_entry(request.in_header.uid, request.in_header.gid, || { n
-            })?;
-
-        // let new_fd = ino_fd.lookup(name)?;
-        // let filestat = new_fd.metadata()?;
-        // let cached_ino = self.ino_map.identify(new_fd);
-
-        // let attr = fuse_attr {
-        //     ino: cached_ino,
-        //     size: filestat.st_size asl u64,
-        //     blocks: filestat.st_size as u64,
-        //     atime: filestat.st_atime as u64,
-        //     mtime: filestat.st_mtime as u64,
-        //     ctime: filestat.st_ctime as u64,
-        //     atimensec: filestat.st_atime_nsec as u32,
-        //     mtimensec: filestat.st_mtime_nsec as u32,
-        //     ctimensec: filestat.st_ctime_nsec as u32,
-        //     mode: filestat.st_mode,
-        //     nlink: filestat.st_nlink as u32,
-        //     uid: filestat.st_uid,
-        //     gid: filestat.st_gid,
-        //     rdev: filestat.st_rdev as u32,
-        //     blksize: filestat.st_blksize as u32,
-        //     padding: 0,
-        // };
-
-        // let out_arg = fuse_entry_out {
-        //     nodeid: attr.ino,
-        //     generation: 0,
-        //     entry_valid: 0,
-        //     attr_valid: 0,
-        //     entry_valid_nsec: 0,
-        //     attr_valid_nsec: 0,
-        //     attr: attr,
-        // };
+        let ino_fd = self.ino_map.get(request.in_header.nodeid)?;
+        mkdirat(ino_fd.as_raw_fd(), name, mode)?;
+        let new_fd = ino_fd.lookup(name)?;
+        let out_arg = self.cccc(&request.in_header, new_fd)?;
 
         Ok(request.send_arg(out_arg))
     }
@@ -895,45 +855,12 @@ impl FuseBackend {
         let name = CStr::from_bytes_with_nul(&name_c)?;
         let link = CStr::from_bytes_with_nul(&link_c)?;
 
-        let ino = request.in_header.nodeid;
-        let ino_fd = self.ino_map.get(ino)?;
+        let ino_fd = self.ino_map.get(request.in_header.nodeid)?;
 
-        with_cred(request.in_header.uid, request.in_header.gid, || {
-            symlinkat(ino_fd.as_raw_fd(), name, link)
-        })?;
+        symlinkat(ino_fd.as_raw_fd(), name, link)?;
 
         let new_fd = ino_fd.lookup(name)?;
-        let filestat = new_fd.metadata()?;
-        let cached_ino = self.ino_map.identify(new_fd);
-
-        let attr = fuse_attr {
-            ino: cached_ino,
-            size: filestat.st_size as u64,
-            blocks: filestat.st_size as u64,
-            atime: filestat.st_atime as u64,
-            mtime: filestat.st_mtime as u64,
-            ctime: filestat.st_ctime as u64,
-            atimensec: filestat.st_atime_nsec as u32,
-            mtimensec: filestat.st_mtime_nsec as u32,
-            ctimensec: filestat.st_ctime_nsec as u32,
-            mode: filestat.st_mode,
-            nlink: filestat.st_nlink as u32,
-            uid: filestat.st_uid,
-            gid: filestat.st_gid,
-            rdev: filestat.st_rdev as u32,
-            blksize: filestat.st_blksize as u32,
-            padding: 0,
-        };
-
-        let out_arg = fuse_entry_out {
-            nodeid: attr.ino,
-            generation: 0,
-            entry_valid: 0,
-            attr_valid: 0,
-            entry_valid_nsec: 0,
-            attr_valid_nsec: 0,
-            attr: attr,
-        };
+        let out_arg = self.cccc(&request.in_header, new_fd)?;
 
         Ok(request.send_arg(out_arg))
     }
@@ -945,6 +872,30 @@ impl FuseBackend {
         let link = readlinkat(ino_fd.as_raw_fd(), None)?;
         Ok(request.send_slice(link.as_bytes_with_nul()))
     }
+
+    pub fn do_link(&mut self, request: &Request) -> Result<u32> {
+        let guest_mem = request.memory;
+        let in_arg: fuse_link_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
+
+        let name_len = request.in_arg_len as usize - mem::size_of_val(&in_arg);
+        let mut buf = vec![0u8; name_len];
+        let pos = request.in_arg_addr.unchecked_add(mem::size_of_val(&in_arg));
+        guest_mem.read_slice_at_addr(&mut buf, pos)?;
+        let name = CStr::from_bytes_with_nul(&buf)?;
+
+        let ino_fd = self.ino_map.get(request.in_header.nodeid)?;
+
+        let old_fd = self.ino_map.get(in_arg.oldnodeid)?;
+
+        linkat(old_fd.as_raw_fd(), None, ino_fd.as_raw_fd(), name, libc::AT_EMPTY_PATH)?;
+
+        let out_arg = self.get_ino_attr(old_fd)?;
+
+        Ok(request.send_arg(out_arg))
+        // Ok(0)
+    }
+
+
 }
 
 // fn bit_contains(token: u32, other: u32) -> bool {

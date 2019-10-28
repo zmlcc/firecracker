@@ -216,6 +216,12 @@ pub fn close(fd: RawFd) -> Result<()> {
     libc_result!(unsafe { libc::close(fd) })
 }
 
+pub fn linkat(old_fd: RawFd, old_name: Option<&CStr>, new_fd: RawFd, new_name: &CStr, flag: c_int) -> Result<()> {
+    let old_name_c = old_name.unwrap_or(Default::default()).as_ptr();
+    let new_name_c = new_name.as_ptr();
+    libc_result!(unsafe { libc::linkat(old_fd, old_name_c, new_fd, new_name_c, flag) })
+}
+
 struct Cred {
     euid: uid_t,
     egid: gid_t,

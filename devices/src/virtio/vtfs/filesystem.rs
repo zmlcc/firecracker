@@ -269,6 +269,7 @@ impl<'a> Request<'a> {
 struct InodeHandler {
     fd: RawFd,
     host_inode: HostInode,
+    nlookup: u64,
 }
 
 impl InodeHandler {
@@ -285,6 +286,7 @@ impl InodeHandler {
                 st_dev: filestat.st_dev,
                 st_ino: filestat.st_ino,
             },
+            nlookup: 0,
         })
     }
 
@@ -301,7 +303,21 @@ impl InodeHandler {
                 st_dev: filestat.st_dev,
                 st_ino: filestat.st_ino,
             },
+            nlookup: 0,
         })
+    }
+
+    fn inc_nlookup(&mut self, delta: u64) {
+        self.nlookup += delta;
+    }
+
+    fn dec_nlookup(&mut self, delta: u64) {
+        debug_assert!(self.nlookup >= delta);
+        self.nlookup -= delta;
+    }
+
+    fn nlookup_zero(&self) -> bool {
+        self.nlookup <= 0
     }
 
     fn metadata(&self) -> Result<FileStat> {
@@ -370,9 +386,9 @@ impl InodeMap {
     }
 
     fn remove(&mut self, ino: u64) {
-        if let Some(aaaa) = self.ino_map.get(&ino) {
-            self.attr_map.remove(&aaaa.host_inode);
-        }
+        // if let Some(aaaa) = self.ino_map.get(&ino) {
+        //     self.attr_map.remove(&aaaa.host_inode);
+        // }
         self.ino_map.remove(&ino);
     }
 
@@ -384,12 +400,33 @@ impl InodeMap {
         }
     }
 
+    fn lookup333(&mut self, inode: InodeHandler) -> u64 {
+        match self.attr_map.get(&inode.host_inode) {
+            None => self.add(inode),
+            Some(&ino) => {
+                self.ino_map.entry(ino).or_insert(inode);
+                ino
+            },
+        }
+    }
+
     fn id22222(&self, inode: &InodeHandler) -> Option<u64> {
         self.attr_map.get(&inode.host_inode).map(|i| {*i})
     }
 
+    // fn get_or_insert_ino(&mut self, inf)
+
     fn get(&self, ino: u64) -> Result<&InodeHandler> {
         self.ino_map.get(&ino).ok_or(ExecuteError::UnknownHandle)
+    }
+
+    fn get222(&mut self, ino: u64) -> Result<&mut InodeHandler> {
+        self.ino_map.get_mut(&ino).ok_or(ExecuteError::UnknownHandle)
+    }
+
+
+    fn inc_nlookup(&mut self, ino: u64, delta: u64) {
+        self.ino_map.entry(ino).and_modify(|e| {e.nlookup += delta});
     }
 }
 
@@ -444,6 +481,7 @@ impl FuseBackend {
         })
     }
 
+
     pub fn do_init(&self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
         let in_arg: fuse_init_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
@@ -465,38 +503,49 @@ impl FuseBackend {
         let ino = request.in_header.nodeid;
 
         let inode = self.ino_map.get(ino)?;
-        let filestat = inode.metadata()?;
-        let attr = fuse_attr {
-            ino: filestat.st_ino,
-            size: filestat.st_size as u64,
-            blocks: filestat.st_size as u64,
-            atime: filestat.st_atime as u64,
-            mtime: filestat.st_mtime as u64,
-            ctime: filestat.st_ctime as u64,
-            atimensec: filestat.st_atime_nsec as u32,
-            mtimensec: filestat.st_mtime_nsec as u32,
-            ctimensec: filestat.st_ctime_nsec as u32,
-            mode: filestat.st_mode,
-            nlink: filestat.st_nlink as u32,
-            uid: filestat.st_uid,
-            gid: filestat.st_gid,
-            rdev: filestat.st_rdev as u32,
-            blksize: filestat.st_blksize as u32,
-            padding: 0,
-        };
+        let out_arg = self.get_ino_fuse_attr(inode)?;
+        // let filestat = inode.metadata()?;
+        // let attr = fuse_attr {
+        //     ino: filestat.st_ino,
+        //     size: filestat.st_size as u64,
+        //     blocks: filestat.st_size as u64,
+        //     atime: filestat.st_atime as u64,
+        //     mtime: filestat.st_mtime as u64,
+        //     ctime: filestat.st_ctime as u64,
+        //     atimensec: filestat.st_atime_nsec as u32,
+        //     mtimensec: filestat.st_mtime_nsec as u32,
+        //     ctimensec: filestat.st_ctime_nsec as u32,
+        //     mode: filestat.st_mode,
+        //     nlink: filestat.st_nlink as u32,
+        //     uid: filestat.st_uid,
+        //     gid: filestat.st_gid,
+        //     rdev: filestat.st_rdev as u32,
+        //     blksize: filestat.st_blksize as u32,
+        //     padding: 0,
+        // };
 
-        let out_arg = fuse_attr_out {
-            attr_valid: 0,
-            attr_valid_nsec: 0,
-            dummy: 0,
-            attr: attr,
-        };
+        // let out_arg = fuse_attr_out {
+        //     attr_valid: 0,
+        //     attr_valid_nsec: 0,
+        //     dummy: 0,
+        //     attr: attr,
+        // };
+        error!("FUCK GETATTR {:?}", out_arg.attr);
 
         Ok(request.send_arg(out_arg))
     }
 
     pub fn do_forget(&mut self, request: &Request) -> Result<u32> {
-        self.ino_map.remove(request.in_header.nodeid);
+        let guest_mem = request.memory;
+        let in_arg: fuse_forget_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
+        error!("FUCK FORGET {} {}", request.in_header.nodeid, in_arg.nlookup);
+
+        let inh = self.ino_map.get222(request.in_header.nodeid)?;
+        inh.dec_nlookup(in_arg.nlookup);
+        if inh.nlookup_zero() {
+            error!("FUCK FORGET REMOVE {}", request.in_header.nodeid);
+            self.ino_map.remove(request.in_header.nodeid);
+        }
 
         Ok(0)
     }
@@ -509,13 +558,23 @@ impl FuseBackend {
 
         let name = CStr::from_bytes_with_nul(&buf)?;
 
+
         let ino = request.in_header.nodeid;
+
+        error!("FUCK LOOKUP {} {:?}", ino, name);
 
         let ino_fd222 = self.ino_map.get(ino)?;
         let new_fd222 = ino_fd222.lookup(name)?;
 
-        let cached_ino = self.ino_map.identify(new_fd222);
-        let used_fd = self.ino_map.get(cached_ino)?;
+
+        let cached_ino = self.ino_map.lookup333(new_fd222);
+        error!("FUCK LOOKUP 22222 {}", cached_ino);
+
+        let used_fd = self.ino_map.get222(cached_ino)?;
+
+        error!("FUCK LOOKUP 33333 {}", used_fd.nlookup);
+
+
 
         let filestat = used_fd.metadata()?;
 
@@ -548,6 +607,7 @@ impl FuseBackend {
             attr: attr,
         };
 
+        used_fd.inc_nlookup(1);
         Ok(request.send_arg(out_arg))
     }
 
@@ -711,6 +771,37 @@ impl FuseBackend {
         })
     }
 
+    fn get_ino_fuse_attr(&self, fd: &InodeHandler) -> Result<fuse_attr_out> {
+        let filestat = fd.metadata()?;
+        let cached_ino = self.ino_map.id22222(fd).ok_or(ExecuteError::UnknownHandle)?;
+
+        let attr = fuse_attr {
+            ino: cached_ino,
+            size: filestat.st_size as u64,
+            blocks: filestat.st_size as u64,
+            atime: filestat.st_atime as u64,
+            mtime: filestat.st_mtime as u64,
+            ctime: filestat.st_ctime as u64,
+            atimensec: filestat.st_atime_nsec as u32,
+            mtimensec: filestat.st_mtime_nsec as u32,
+            ctimensec: filestat.st_ctime_nsec as u32,
+            mode: filestat.st_mode,
+            nlink: filestat.st_nlink as u32,
+            uid: filestat.st_uid,
+            gid: filestat.st_gid,
+            rdev: filestat.st_rdev as u32,
+            blksize: filestat.st_blksize as u32,
+            padding: 0,
+        };
+
+        Ok(fuse_attr_out {
+            attr_valid: 0,
+            attr_valid_nsec: 0,
+            dummy: 0,
+            attr: attr,
+        })
+    }
+
     fn adjust_cred(req: &fuse_in_header, new_fd: &InodeHandler) -> Result<()> {
         let (uid, gid) = (req.uid, req.gid);
         if uid == 0 && gid == 0 {
@@ -746,6 +837,9 @@ impl FuseBackend {
         mkdirat(ino_fd.as_raw_fd(), name, mode)?;
         let new_fd = ino_fd.lookup(name)?;
         let out_arg = self.cccc(&request.in_header, new_fd)?;
+
+        let ino = out_arg.attr.ino;
+        self.ino_map.inc_nlookup(ino, 1);
 
         Ok(request.send_arg(out_arg))
     }
@@ -883,17 +977,22 @@ impl FuseBackend {
         guest_mem.read_slice_at_addr(&mut buf, pos)?;
         let name = CStr::from_bytes_with_nul(&buf)?;
 
-        let ino_fd = self.ino_map.get(request.in_header.nodeid)?;
+        let ino_fd = self.ino_map.get(request.in_header.nodeid)?.as_raw_fd();
+
 
         let old_fd = self.ino_map.get(in_arg.oldnodeid)?;
 
-        linkat(old_fd.as_raw_fd(), None, ino_fd.as_raw_fd(), name, libc::AT_EMPTY_PATH)?;
+        linkat(old_fd.as_raw_fd(), None, ino_fd, name, libc::AT_EMPTY_PATH)?;
 
         let out_arg = self.get_ino_attr(old_fd)?;
+
+        self.ino_map.inc_nlookup(in_arg.oldnodeid, 1);
 
         Ok(request.send_arg(out_arg))
         // Ok(0)
     }
+
+    
 
 
 }

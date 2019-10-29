@@ -15,6 +15,19 @@ use std::{io, mem, ptr, result};
 
 type Result<T> = result::Result<T, io::Error>;
 
+pub struct Fd(RawFd);
+
+impl Fd {
+    // pub fn openat()
+}
+
+impl Drop for Fd {
+    fn drop(&mut self) {
+        unsafe { libc::close(self.0) };
+    }
+}
+
+
 pub struct Dir(*mut DIR);
 
 unsafe impl Send for Dir {}

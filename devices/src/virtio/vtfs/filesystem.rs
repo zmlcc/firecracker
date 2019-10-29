@@ -15,7 +15,7 @@ use sys_util::fs::{
     symlinkat, unlinkat, linkat
 };
 
-use sys_util::fs::Dir;
+use sys_util::fs::{Dir, Fd};
 
 use libc::statvfs as Statvfs;
 
@@ -414,7 +414,6 @@ impl InodeMap {
         self.attr_map.get(&inode.host_inode).map(|i| {*i})
     }
 
-    // fn get_or_insert_ino(&mut self, inf)
 
     fn get(&self, ino: u64) -> Result<&InodeHandler> {
         self.ino_map.get(&ino).ok_or(ExecuteError::UnknownHandle)
@@ -466,6 +465,7 @@ impl<V> FDMap<V> {
 
 pub struct FuseBackend {
     dir_map: FDMap<Dir>,
+    fd_map: FDMap<Fd>,
     ino_map: InodeMap,
 }
 
@@ -477,6 +477,7 @@ impl FuseBackend {
 
         Some(FuseBackend {
             dir_map: FDMap::new(1),
+            fd_map: FDMap::new(1),
             ino_map: ino_map,
         })
     }
@@ -504,32 +505,7 @@ impl FuseBackend {
 
         let inode = self.ino_map.get(ino)?;
         let out_arg = self.get_ino_fuse_attr(inode)?;
-        // let filestat = inode.metadata()?;
-        // let attr = fuse_attr {
-        //     ino: filestat.st_ino,
-        //     size: filestat.st_size as u64,
-        //     blocks: filestat.st_size as u64,
-        //     atime: filestat.st_atime as u64,
-        //     mtime: filestat.st_mtime as u64,
-        //     ctime: filestat.st_ctime as u64,
-        //     atimensec: filestat.st_atime_nsec as u32,
-        //     mtimensec: filestat.st_mtime_nsec as u32,
-        //     ctimensec: filestat.st_ctime_nsec as u32,
-        //     mode: filestat.st_mode,
-        //     nlink: filestat.st_nlink as u32,
-        //     uid: filestat.st_uid,
-        //     gid: filestat.st_gid,
-        //     rdev: filestat.st_rdev as u32,
-        //     blksize: filestat.st_blksize as u32,
-        //     padding: 0,
-        // };
-
-        // let out_arg = fuse_attr_out {
-        //     attr_valid: 0,
-        //     attr_valid_nsec: 0,
-        //     dummy: 0,
-        //     attr: attr,
-        // };
+        
         error!("FUCK GETATTR {:?}", out_arg.attr);
 
         Ok(request.send_arg(out_arg))
@@ -700,6 +676,8 @@ impl FuseBackend {
 
         let new_fd = ino_fd.lookup(name)?;
         let out_arg = self.cccc(&request.in_header, new_fd)?;
+        let ino = out_arg.attr.ino;
+        self.ino_map.inc_nlookup(ino, 1);
         Ok(request.send_arg(out_arg))
     }
 
@@ -956,6 +934,9 @@ impl FuseBackend {
         let new_fd = ino_fd.lookup(name)?;
         let out_arg = self.cccc(&request.in_header, new_fd)?;
 
+        let ino = out_arg.attr.ino;
+        self.ino_map.inc_nlookup(ino, 1);
+
         Ok(request.send_arg(out_arg))
     }
 
@@ -992,7 +973,13 @@ impl FuseBackend {
         // Ok(0)
     }
 
-    
+
+    pub fn do_open(&mut self, request: &Request) -> Result<u32> {
+        let guest_mem = request.memory;
+        let in_arg: fuse_open_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
+
+        Ok(0)
+    }
 
 
 }

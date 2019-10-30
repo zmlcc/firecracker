@@ -116,6 +116,7 @@ impl<'a> Request<'a> {
             fuse_opcode_FUSE_SYMLINK => fs.do_symlink(self),
             fuse_opcode_FUSE_READLINK => fs.do_readlink(self),
             fuse_opcode_FUSE_LINK => fs.do_link(self),
+            fuse_opcode_FUSE_OPEN => fs.do_open(self),
             _ => Err(ExecuteError::InvalidMethod),
         };
         error!("FUCK EXEC {:?}", ret);
@@ -503,6 +504,8 @@ impl FuseBackend {
         // not use fuse_getattr_in
         let ino = request.in_header.nodeid;
 
+        error!("FUCK GETATTR 111 {:?}", ino);
+
         let inode = self.ino_map.get(ino)?;
         let out_arg = self.get_ino_fuse_attr(inode)?;
         
@@ -750,7 +753,9 @@ impl FuseBackend {
     }
 
     fn get_ino_fuse_attr(&self, fd: &InodeHandler) -> Result<fuse_attr_out> {
+        println!("FUSE ATTR {:?}", fd);
         let filestat = fd.metadata()?;
+        println!("ANSWER {:?}", filestat.st_ino);
         let cached_ino = self.ino_map.id22222(fd).ok_or(ExecuteError::UnknownHandle)?;
 
         let attr = fuse_attr {
@@ -978,7 +983,27 @@ impl FuseBackend {
         let guest_mem = request.memory;
         let in_arg: fuse_open_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
-        Ok(0)
+        let ino_fd = self.ino_map.get(request.in_header.nodeid)?;
+
+        let eee_fd = Fd::from_rawfd(ino_fd.as_raw_fd());
+
+        error!("FUCK OPEN {:?} {:?}", ino_fd, in_arg);
+
+        let fd = eee_fd.reopen(in_arg.flags as libc::c_int)?;
+
+        error!("FUCK OPEN222 {:?}", fd);
+
+
+        let fd_num = self.fd_map.insert(fd);
+
+        let out_arg = fuse_open_out {
+            fh: fd_num,
+            ..fuse_open_out::default()
+        };
+
+        Ok(request.send_arg(out_arg))
+
+        // Ok(0)
     }
 
 

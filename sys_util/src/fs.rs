@@ -15,10 +15,38 @@ use std::{io, mem, ptr, result};
 
 type Result<T> = result::Result<T, io::Error>;
 
+#[derive(Debug)]
 pub struct Fd(RawFd);
 
 impl Fd {
-    // pub fn openat()
+    pub fn openat(&self, name: Option<&CStr>, flag: c_int) -> Result<Fd> {
+    let name_c = name.unwrap_or(Default::default()).as_ptr();
+    let ret = unsafe { libc::openat(self.0, name_c, flag) };
+    if ret < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(Fd(ret as RawFd))
+    }
+}
+
+    pub fn from_rawfd(fd: RawFd) -> Fd {
+        Fd(fd)
+    }
+
+    pub fn reopen(&self, flag: c_int) -> Result<Fd> {
+        let name = format!("/proc/self/fd/{}\0", self.0);
+        // it should be safe because `\0` is at the end of name.
+        let name_c = unsafe {CStr::from_bytes_with_nul_unchecked(name.as_bytes())};
+
+        let ret = unsafe { libc::open(name_c.as_ptr(), flag) };
+    if ret < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(Fd(ret as RawFd))
+    }
+    }
+
+
 }
 
 impl Drop for Fd {

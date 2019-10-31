@@ -3,13 +3,17 @@
 
 use libc::stat as FileStat;
 use libc::statvfs as Statvfs;
-use libc::{self, c_char, c_int, c_uchar, dev_t, dirent, gid_t, mode_t, uid_t, DIR};
+use libc::{self, c_char, c_int, c_void, c_uchar, dev_t, dirent, gid_t, mode_t, uid_t, DIR};
 
 use std::mem::MaybeUninit;
 use std::os::unix::io::RawFd;
 
 use std::ffi::{CStr, CString};
 
+use std::io::{Read, IoSliceMut};
+
+
+use std::cmp;
 use std::fmt::{self, Debug};
 use std::{io, mem, ptr, result};
 
@@ -20,14 +24,14 @@ pub struct Fd(RawFd);
 
 impl Fd {
     pub fn openat(&self, name: Option<&CStr>, flag: c_int) -> Result<Fd> {
-    let name_c = name.unwrap_or(Default::default()).as_ptr();
-    let ret = unsafe { libc::openat(self.0, name_c, flag) };
-    if ret < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(Fd(ret as RawFd))
+        let name_c = name.unwrap_or(Default::default()).as_ptr();
+        let ret = unsafe { libc::openat(self.0, name_c, flag) };
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(Fd(ret as RawFd))
+        }
     }
-}
 
     pub fn from_rawfd(fd: RawFd) -> Fd {
         Fd(fd)
@@ -35,18 +39,58 @@ impl Fd {
 
     pub fn reopen(&self, flag: c_int) -> Result<Fd> {
         let name = format!("/proc/self/fd/{}\0", self.0);
-        // it should be safe because `\0` is at the end of name.
-        let name_c = unsafe {CStr::from_bytes_with_nul_unchecked(name.as_bytes())};
+        // It should be safe because `\0` is at the end of name.
+        let name_c = unsafe { CStr::from_bytes_with_nul_unchecked(name.as_bytes()) };
 
         let ret = unsafe { libc::open(name_c.as_ptr(), flag) };
-    if ret < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(Fd(ret as RawFd))
-    }
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(Fd(ret as RawFd))
+        }
     }
 
+    pub fn fstatat(&self, name: Option<&CStr>, flag: c_int) -> Result<FileStat> {
+        let (name, flag) = match name {
+            Some(n) => (n, flag),
+            None => (<&CStr>::default(), flag | libc::AT_EMPTY_PATH),
+        };
 
+        let mut buf = MaybeUninit::<FileStat>::uninit();
+        let ret = unsafe { libc::fstatat(self.0, name.as_ptr(), buf.as_mut_ptr(), flag) };
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            // It's safe because buf has been initialiezed.
+            unsafe { Ok(buf.assume_init()) }
+        }
+    }
+
+}
+
+impl Read for Fd {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let ret = libc_ret(unsafe {
+            libc::read(self.0,
+                       buf.as_mut_ptr() as *mut c_void,
+                       cmp::min(buf.len(), c_int::max_value() as usize))
+        })?;
+        Ok(ret as usize)
+    }
+
+    fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
+        let ret = libc_ret(unsafe {
+            libc::readv(self.0,
+                        bufs.as_ptr() as *const libc::iovec,
+                        cmp::min(bufs.len(), c_int::max_value() as usize) as c_int)
+        })?;
+        Ok(ret as usize)
+    }
+
+    // #[inline]
+    // unsafe fn initializer(&self) -> Initializer {
+    //     Initializer::nop()
+    // }
 }
 
 impl Drop for Fd {
@@ -54,7 +98,6 @@ impl Drop for Fd {
         unsafe { libc::close(self.0) };
     }
 }
-
 
 pub struct Dir(*mut DIR);
 
@@ -161,6 +204,27 @@ macro_rules! libc_result {
     }};
 }
 
+
+macro_rules! libc_result_t {
+    ($callback:expr) => {{
+        let ret = $callback;
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(ret)
+        }
+    }};
+}
+
+
+fn libc_ret(ret: c_int) -> Result<c_int> {
+    if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(ret)
+        }
+}
+
 pub fn mknodat(dirfd: RawFd, name: &CStr, mode: mode_t, dev: dev_t) -> Result<()> {
     libc_result!(unsafe { libc::mknodat(dirfd, name.as_ptr(), mode, dev) })
 }
@@ -257,7 +321,13 @@ pub fn close(fd: RawFd) -> Result<()> {
     libc_result!(unsafe { libc::close(fd) })
 }
 
-pub fn linkat(old_fd: RawFd, old_name: Option<&CStr>, new_fd: RawFd, new_name: &CStr, flag: c_int) -> Result<()> {
+pub fn linkat(
+    old_fd: RawFd,
+    old_name: Option<&CStr>,
+    new_fd: RawFd,
+    new_name: &CStr,
+    flag: c_int,
+) -> Result<()> {
     let old_name_c = old_name.unwrap_or(Default::default()).as_ptr();
     let new_name_c = new_name.as_ptr();
     libc_result!(unsafe { libc::linkat(old_fd, old_name_c, new_fd, new_name_c, flag) })

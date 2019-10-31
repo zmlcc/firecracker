@@ -11,8 +11,8 @@ use std::os::unix::io::RawFd;
 
 use std::ffi::{CStr, CString};
 use sys_util::fs::{
-    close, fchmod, fchown, fstatat, fstatvfs, mkdirat, mknodat, open, openat, readlinkat,
-    symlinkat, unlinkat, linkat
+    close, fchmod, fchown, fstatat, fstatvfs, linkat, mkdirat, mknodat, open, openat, readlinkat,
+    symlinkat, unlinkat,
 };
 
 use sys_util::fs::{Dir, Fd};
@@ -407,27 +407,68 @@ impl InodeMap {
             Some(&ino) => {
                 self.ino_map.entry(ino).or_insert(inode);
                 ino
-            },
+            }
         }
     }
 
     fn id22222(&self, inode: &InodeHandler) -> Option<u64> {
-        self.attr_map.get(&inode.host_inode).map(|i| {*i})
+        self.attr_map.get(&inode.host_inode).map(|i| *i)
     }
-
 
     fn get(&self, ino: u64) -> Result<&InodeHandler> {
         self.ino_map.get(&ino).ok_or(ExecuteError::UnknownHandle)
     }
 
     fn get222(&mut self, ino: u64) -> Result<&mut InodeHandler> {
-        self.ino_map.get_mut(&ino).ok_or(ExecuteError::UnknownHandle)
+        self.ino_map
+            .get_mut(&ino)
+            .ok_or(ExecuteError::UnknownHandle)
     }
-
 
     fn inc_nlookup(&mut self, ino: u64, delta: u64) {
-        self.ino_map.entry(ino).and_modify(|e| {e.nlookup += delta});
+        self.ino_map.entry(ino).and_modify(|e| e.nlookup += delta);
     }
+}
+
+struct Handler {
+    fd: Fd,
+    sn: u64,
+}
+
+struct HandlerMap {
+    map: HashMap<u64, Handler>,
+    next_key: u64,
+}
+
+impl HandlerMap {
+    fn new(start_key: u64) -> HandlerMap {
+        HandlerMap {
+            map: HashMap::default(),
+            next_key: start_key,
+        }
+    }
+
+    fn insert(&mut self, v: Fd) -> u64 {
+        let key = self.next_key;
+        self.next_key += 1;
+
+        let value = Handler {
+            fd: v,
+            sn: key,
+        };
+
+        self.map.insert(key, value);
+        key
+    }
+
+    fn remove(&mut self, key: u64) {
+        self.map.remove(&key);
+    }
+
+fn get(&self, key: u64) -> Result<&Handler> {
+        self.map.get(&key).ok_or(ExecuteError::UnknownHandle)
+    }
+
 }
 
 struct FDMap<V> {
@@ -455,9 +496,9 @@ impl<V> FDMap<V> {
         self.map.remove(&key);
     }
 
-    // fn get(&self, key: u64) -> Option<&V> {
-    //     self.map.get(&key)
-    // }
+    fn get(&self, key: u64) -> Result<&V> {
+        self.map.get(&key).ok_or(ExecuteError::UnknownHandle)
+    }
 
     fn get_mut(&mut self, key: u64) -> Result<&mut V> {
         self.map.get_mut(&key).ok_or(ExecuteError::UnknownHandle)
@@ -466,7 +507,7 @@ impl<V> FDMap<V> {
 
 pub struct FuseBackend {
     dir_map: FDMap<Dir>,
-    fd_map: FDMap<Fd>,
+    fd_map: HandlerMap,
     ino_map: InodeMap,
 }
 
@@ -478,11 +519,10 @@ impl FuseBackend {
 
         Some(FuseBackend {
             dir_map: FDMap::new(1),
-            fd_map: FDMap::new(1),
+            fd_map: HandlerMap::new(1),
             ino_map: ino_map,
         })
     }
-
 
     pub fn do_init(&self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
@@ -501,14 +541,25 @@ impl FuseBackend {
     }
 
     pub fn do_getattr(&self, request: &Request) -> Result<u32> {
-        // not use fuse_getattr_in
-        let ino = request.in_header.nodeid;
+        let guest_mem = request.memory;
+        let in_arg: fuse_getattr_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
-        error!("FUCK GETATTR 111 {:?}", ino);
+        let out_arg = match in_arg.getattr_flags {
+            0 => {
+                let inode = self.ino_map.get(request.in_header.nodeid)?;
+                self.get_ino_fuse_attr(inode)?
+            }
+            _ => {
+                let fh = self.fd_map.get(in_arg.fh)?;
+                self.get_fh_fuse_attr(fh)?
+            }
+        };
 
-        let inode = self.ino_map.get(ino)?;
-        let out_arg = self.get_ino_fuse_attr(inode)?;
-        
+        // error!("FUCK GETATTR 111 {:?}", inode);
+
+        // let inode = self.ino_map.get(ino)?;
+        // let out_arg = self.get_ino_fuse_attr(inode)?;
+
         error!("FUCK GETATTR {:?}", out_arg.attr);
 
         Ok(request.send_arg(out_arg))
@@ -517,7 +568,10 @@ impl FuseBackend {
     pub fn do_forget(&mut self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
         let in_arg: fuse_forget_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
-        error!("FUCK FORGET {} {}", request.in_header.nodeid, in_arg.nlookup);
+        error!(
+            "FUCK FORGET {} {}",
+            request.in_header.nodeid, in_arg.nlookup
+        );
 
         let inh = self.ino_map.get222(request.in_header.nodeid)?;
         inh.dec_nlookup(in_arg.nlookup);
@@ -537,7 +591,6 @@ impl FuseBackend {
 
         let name = CStr::from_bytes_with_nul(&buf)?;
 
-
         let ino = request.in_header.nodeid;
 
         error!("FUCK LOOKUP {} {:?}", ino, name);
@@ -545,15 +598,12 @@ impl FuseBackend {
         let ino_fd222 = self.ino_map.get(ino)?;
         let new_fd222 = ino_fd222.lookup(name)?;
 
-
         let cached_ino = self.ino_map.lookup333(new_fd222);
         error!("FUCK LOOKUP 22222 {}", cached_ino);
 
         let used_fd = self.ino_map.get222(cached_ino)?;
 
         error!("FUCK LOOKUP 33333 {}", used_fd.nlookup);
-
-
 
         let filestat = used_fd.metadata()?;
 
@@ -720,7 +770,10 @@ impl FuseBackend {
 
     fn get_ino_attr(&self, fd: &InodeHandler) -> Result<fuse_entry_out> {
         let filestat = fd.metadata()?;
-        let cached_ino = self.ino_map.id22222(fd).ok_or(ExecuteError::UnknownHandle)?;
+        let cached_ino = self
+            .ino_map
+            .id22222(fd)
+            .ok_or(ExecuteError::UnknownHandle)?;
 
         let attr = fuse_attr {
             ino: cached_ino,
@@ -756,7 +809,43 @@ impl FuseBackend {
         println!("FUSE ATTR {:?}", fd);
         let filestat = fd.metadata()?;
         println!("ANSWER {:?}", filestat.st_ino);
-        let cached_ino = self.ino_map.id22222(fd).ok_or(ExecuteError::UnknownHandle)?;
+        let cached_ino = self
+            .ino_map
+            .id22222(fd)
+            .ok_or(ExecuteError::UnknownHandle)?;
+
+        let attr = fuse_attr {
+            ino: cached_ino,
+            size: filestat.st_size as u64,
+            blocks: filestat.st_size as u64,
+            atime: filestat.st_atime as u64,
+            mtime: filestat.st_mtime as u64,
+            ctime: filestat.st_ctime as u64,
+            atimensec: filestat.st_atime_nsec as u32,
+            mtimensec: filestat.st_mtime_nsec as u32,
+            ctimensec: filestat.st_ctime_nsec as u32,
+            mode: filestat.st_mode,
+            nlink: filestat.st_nlink as u32,
+            uid: filestat.st_uid,
+            gid: filestat.st_gid,
+            rdev: filestat.st_rdev as u32,
+            blksize: filestat.st_blksize as u32,
+            padding: 0,
+        };
+
+        Ok(fuse_attr_out {
+            attr_valid: 0,
+            attr_valid_nsec: 0,
+            dummy: 0,
+            attr: attr,
+        })
+    }
+
+    fn get_fh_fuse_attr(&self, fh: &Handler) -> Result<fuse_attr_out> {
+        println!("FUSE FHHHHH ATTR {:?}", fh.fd);
+        let filestat = fh.fd.fstatat(None, libc::AT_EMPTY_PATH).map_err(|e| ExecuteError::from(e))?;
+        println!("ANSWER {:?}", filestat.st_ino);
+        let cached_ino = fh.sn;
 
         let attr = fuse_attr {
             ino: cached_ino,
@@ -965,7 +1054,6 @@ impl FuseBackend {
 
         let ino_fd = self.ino_map.get(request.in_header.nodeid)?.as_raw_fd();
 
-
         let old_fd = self.ino_map.get(in_arg.oldnodeid)?;
 
         linkat(old_fd.as_raw_fd(), None, ino_fd, name, libc::AT_EMPTY_PATH)?;
@@ -977,7 +1065,6 @@ impl FuseBackend {
         Ok(request.send_arg(out_arg))
         // Ok(0)
     }
-
 
     pub fn do_open(&mut self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
@@ -993,7 +1080,6 @@ impl FuseBackend {
 
         error!("FUCK OPEN222 {:?}", fd);
 
-
         let fd_num = self.fd_map.insert(fd);
 
         let out_arg = fuse_open_out {
@@ -1003,10 +1089,16 @@ impl FuseBackend {
 
         Ok(request.send_arg(out_arg))
 
-        // Ok(0)
     }
 
+    pub fn do_read(&mut self, request: &Request) -> Result<u32> {
+        let guest_mem = request.memory;
+        let in_arg: fuse_read_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
+        let fh = self.fd_map.get(in_arg.fh)?;
+        
+        // Ok(0)
+    }
 }
 
 // fn bit_contains(token: u32, other: u32) -> bool {

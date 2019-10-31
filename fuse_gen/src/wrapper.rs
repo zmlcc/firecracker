@@ -20,4 +20,5 @@ unsafe impl DataInit for fuse::fuse_statfs_out {}
 unsafe impl DataInit for fuse::fuse_mknod_in {}
 unsafe impl DataInit for fuse::fuse_mkdir_in {}
 unsafe impl DataInit for fuse::fuse_setattr_in {}
+unsafe impl DataInit for fuse::fuse_getattr_in {}
 unsafe impl DataInit for fuse::fuse_link_in {}

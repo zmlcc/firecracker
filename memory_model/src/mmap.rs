@@ -239,6 +239,25 @@ impl MemoryMapping {
         Ok(())
     }
 
+    /// Inexact version of `read_to_memory`, return the actual read size. 
+    pub fn read_to_memory_inexact<F>(&self, mem_offset: usize, src: &mut F, count: usize) -> Result<(usize)>
+    where
+        F: Read,
+    {
+        let (mem_end, fail) = mem_offset.overflowing_add(count);
+        if fail || mem_end > self.size() {
+            return Err(Error::InvalidRange(mem_offset, count));
+        }
+        unsafe {
+            // It is safe to overwrite the volatile memory. Accessing the guest
+            // memory as a mutable slice is OK because nothing assumes another
+            // thread won't change what is loaded.
+            let dst = &mut self.as_mut_slice()[mem_offset..mem_end];
+            let ret = src.read(dst).map_err(Error::ReadFromSource)?;
+        Ok(ret)
+        }
+    }
+
     /// Writes data from memory to a writable object.
     ///
     /// # Arguments

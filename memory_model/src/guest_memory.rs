@@ -323,6 +323,23 @@ impl GuestMemory {
         })
     }
 
+    /// Inexact version of `read_to_memory`, return the actual read size.
+    pub fn read_to_memory_inexact<F>(
+        &self,
+        guest_addr: GuestAddress,
+        src: &mut F,
+        count: usize,
+    ) -> Result<usize>
+    where
+        F: Read,
+    {
+        self.do_in_region(guest_addr, count, move |mapping, offset| {
+            mapping
+                .read_to_memory_inexact(offset, src, count)
+                .map_err(|e| Error::MemoryAccess(guest_addr, e))
+        })
+    }
+
     /// Writes data from memory to a writable object.
     ///
     /// # Arguments

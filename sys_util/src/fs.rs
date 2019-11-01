@@ -22,6 +22,31 @@ type Result<T> = result::Result<T, io::Error>;
 #[derive(Debug)]
 pub struct Fd(RawFd);
 
+
+macro_rules! libc_err {
+    ($callback:expr) => {{
+        let ret = $callback;
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }};
+}
+
+
+macro_rules! libc_ret {
+    ($callback:expr) => {{
+        let ret = $callback;
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(ret)
+        }
+    }};
+}
+
+
 impl Fd {
     pub fn openat(&self, name: Option<&CStr>, flag: c_int) -> Result<Fd> {
         let name_c = name.unwrap_or(Default::default()).as_ptr();
@@ -70,16 +95,16 @@ impl Fd {
 
 impl Read for Fd {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let ret = libc_ret(unsafe {
+        let ret = libc_ret!(unsafe {
             libc::read(self.0,
                        buf.as_mut_ptr() as *mut c_void,
-                       cmp::min(buf.len(), c_int::max_value() as usize))
+                       buf.len() as libc::size_t)
         })?;
         Ok(ret as usize)
     }
 
     fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
-        let ret = libc_ret(unsafe {
+        let ret = libc_ret!(unsafe {
             libc::readv(self.0,
                         bufs.as_ptr() as *const libc::iovec,
                         cmp::min(bufs.len(), c_int::max_value() as usize) as c_int)
@@ -193,61 +218,39 @@ impl Debug for Entry {
     }
 }
 
-macro_rules! libc_result {
-    ($callback:expr) => {{
-        let ret = $callback;
-        if ret < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }};
-}
 
 
-macro_rules! libc_result_t {
-    ($callback:expr) => {{
-        let ret = $callback;
-        if ret < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(ret)
-        }
-    }};
-}
-
-
-fn libc_ret(ret: c_int) -> Result<c_int> {
-    if ret < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(ret)
-        }
-}
+// fn libc_ret(ret: c_int) -> Result<c_int> {
+//     if ret < 0 {
+//             Err(io::Error::last_os_error())
+//         } else {
+//             Ok(ret)
+//         }
+// }
 
 pub fn mknodat(dirfd: RawFd, name: &CStr, mode: mode_t, dev: dev_t) -> Result<()> {
-    libc_result!(unsafe { libc::mknodat(dirfd, name.as_ptr(), mode, dev) })
+    libc_err!(unsafe { libc::mknodat(dirfd, name.as_ptr(), mode, dev) })
 }
 
 pub fn mkdirat(dirfd: RawFd, name: &CStr, mode: mode_t) -> Result<()> {
-    libc_result!(unsafe { libc::mkdirat(dirfd, name.as_ptr(), mode) })
+    libc_err!(unsafe { libc::mkdirat(dirfd, name.as_ptr(), mode) })
 }
 
 pub fn fchmod(dirfd: RawFd, mode: mode_t) -> Result<()> {
-    libc_result!(unsafe { libc::fchmod(dirfd, mode) })
+    libc_err!(unsafe { libc::fchmod(dirfd, mode) })
 }
 
 pub fn fchown(dirfd: RawFd, owner: uid_t, group: gid_t) -> Result<()> {
-    libc_result!(unsafe { libc::fchown(dirfd, owner, group) })
+    libc_err!(unsafe { libc::fchown(dirfd, owner, group) })
 }
 
 pub fn unlinkat(dirfd: RawFd, name: Option<&CStr>, flag: c_int) -> Result<()> {
     let name_c = name.unwrap_or(Default::default()).as_ptr();
-    libc_result!(unsafe { libc::unlinkat(dirfd, name_c, flag) })
+    libc_err!(unsafe { libc::unlinkat(dirfd, name_c, flag) })
 }
 
 pub fn symlinkat(dirfd: RawFd, linkpath: &CStr, target: &CStr) -> Result<()> {
-    libc_result!(unsafe { libc::symlinkat(target.as_ptr(), dirfd, linkpath.as_ptr()) })
+    libc_err!(unsafe { libc::symlinkat(target.as_ptr(), dirfd, linkpath.as_ptr()) })
 }
 
 pub fn readlinkat(dirfd: RawFd, name: Option<&CStr>) -> Result<CString> {
@@ -318,7 +321,7 @@ pub fn open(name: &CStr, flag: c_int) -> Result<RawFd> {
 }
 
 pub fn close(fd: RawFd) -> Result<()> {
-    libc_result!(unsafe { libc::close(fd) })
+    libc_err!(unsafe { libc::close(fd) })
 }
 
 pub fn linkat(
@@ -330,7 +333,7 @@ pub fn linkat(
 ) -> Result<()> {
     let old_name_c = old_name.unwrap_or(Default::default()).as_ptr();
     let new_name_c = new_name.as_ptr();
-    libc_result!(unsafe { libc::linkat(old_fd, old_name_c, new_fd, new_name_c, flag) })
+    libc_err!(unsafe { libc::linkat(old_fd, old_name_c, new_fd, new_name_c, flag) })
 }
 
 struct Cred {
@@ -362,8 +365,8 @@ impl Cred {
     }
 
     fn restore(&self) -> Result<()> {
-        libc_result!(unsafe { libc::seteuid(self.euid) })?;
-        libc_result!(unsafe { libc::setegid(self.egid) })
+        libc_err!(unsafe { libc::seteuid(self.euid) })?;
+        libc_err!(unsafe { libc::setegid(self.egid) })
     }
 }
 

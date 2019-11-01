@@ -223,6 +223,28 @@ impl<'a> Request<'a> {
         our_header.len
     }
 
+    fn send_data<F: std::io::Read>(&self, src: F, count: u32) -> u32
+    {
+        // We use unwrap because the request parsing process already checked that the
+        // addr was valid.
+        self.memory.read_to_memory(self.out_arg_addr, src, count)
+            .unwrap();
+        
+        let our_header = fuse_out_header {
+            len: (mem::size_of::<fuse_out_header>()) as u32,
+            error: 0,
+            unique: self.in_header.unique,
+        };
+
+        // We use unwrap because the request parsing process already checked that the
+        // addr was valid.
+        self.memory
+            .write_obj_at_addr(our_header, self.out_header_addr)
+            .unwrap();
+
+        our_header.len
+    }
+
     fn send_dirent_vec(&self, arg: Vec<FuseDirent>) -> u32 {
         let mut arg_len = 0;
         for entry in arg.iter() {
@@ -1096,7 +1118,11 @@ impl FuseBackend {
         let in_arg: fuse_read_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
         let fh = self.fd_map.get(in_arg.fh)?;
+
+        error!("FUCK --READ-- {:?} {}", in_arg, fh);
+
         
+
         // Ok(0)
     }
 }

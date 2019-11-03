@@ -64,7 +64,12 @@ pub enum VtfsError {
     // NotFoundInodeError,
 }
 
-#[derive(Clone, Copy)]
+struct DataBuf {
+    addr: GuestAddress,
+    len: usize,
+}
+
+// #[derive(Clone)]
 pub struct Request<'a> {
     memory: &'a GuestMemory,
     in_header: fuse_in_header,
@@ -72,6 +77,7 @@ pub struct Request<'a> {
     in_arg_len: u32,
     out_header_addr: GuestAddress,
     out_arg_addr: GuestAddress,
+    out_data_buf: Vec<DataBuf>,
 }
 
 impl<'a> Request<'a> {
@@ -92,6 +98,7 @@ impl<'a> Request<'a> {
             in_arg_len: 0,
             out_header_addr: GuestAddress(0),
             out_arg_addr: GuestAddress(0),
+            out_data_buf: Vec::new(),
         };
         r.check_chain(avail_desc).map(|_| r)
     }
@@ -117,6 +124,7 @@ impl<'a> Request<'a> {
             fuse_opcode_FUSE_READLINK => fs.do_readlink(self),
             fuse_opcode_FUSE_LINK => fs.do_link(self),
             fuse_opcode_FUSE_OPEN => fs.do_open(self),
+            fuse_opcode_FUSE_READ => fs.do_read(self),
             _ => Err(ExecuteError::InvalidMethod),
         };
         error!("FUCK EXEC {:?}", ret);
@@ -160,6 +168,36 @@ impl<'a> Request<'a> {
                     .next_descriptor()
                     .ok_or(VtfsError::DescriptorChainTooShort)?;
                 self.out_arg_addr = out_arg_desc.addr;
+            }
+
+            fuse_opcode_FUSE_READ => {
+                let in_arg_desc = avail_desc
+                    .next_descriptor()
+                    .ok_or(VtfsError::DescriptorChainTooShort)?;
+                let out_header_desc = in_arg_desc
+                    .next_descriptor()
+                    .ok_or(VtfsError::DescriptorChainTooShort)?;
+
+                self.in_arg_addr = in_arg_desc.addr;
+                self.in_arg_len = in_arg_desc.len;
+                self.out_header_addr = out_header_desc.addr;
+                // self.out_arg_addr = out_arg_desc.addr;
+
+                // error!("FUCK CHECKCHAIN READ {} {} {}", out_arg_desc.is_write_only(), out_arg_desc.has_next(), out_arg_desc.len);
+
+                // let out_arg_desc = out_header_desc
+                //     .next_descriptor()
+                //     .ok_or(VtfsError::DescriptorChainTooShort)?;
+
+                let mut aaa = out_header_desc;
+                while aaa.has_next() {
+                    aaa = aaa.next_descriptor().unwrap();
+                    error!("FUCK CHECKCHAIN READ NEXT {} {}", aaa.has_next(), aaa.len);
+                    self.out_data_buf.push(DataBuf {
+                        addr: aaa.addr,
+                        len: aaa.len as usize,
+                    });
+                }
             }
 
             // in_header + in_arg + out_header + out_arg
@@ -223,15 +261,22 @@ impl<'a> Request<'a> {
         our_header.len
     }
 
-    fn send_data<F: std::io::Read>(&self, src: F, count: u32) -> u32
-    {
-        // We use unwrap because the request parsing process already checked that the
-        // addr was valid.
-        self.memory.read_to_memory(self.out_arg_addr, src, count)
-            .unwrap();
-        
+    fn send_data<F: std::io::Read>(&self, src: &mut F) -> u32 {
+        let mut read_size = 0;
+        for buf in self.out_data_buf.iter() {
+            let aaa = self
+                .memory
+                .read_to_memory_inexact(buf.addr, src, buf.len)
+                .unwrap();
+            error!("FUCK SENDDATA {:?} {} {}", buf.addr, buf.len, aaa);
+            if aaa == 0 {
+                break;
+            }
+            read_size += aaa;
+        }
+
         let our_header = fuse_out_header {
-            len: (mem::size_of::<fuse_out_header>()) as u32,
+            len: (mem::size_of::<fuse_out_header>() + read_size) as u32,
             error: 0,
             unique: self.in_header.unique,
         };
@@ -474,10 +519,7 @@ impl HandlerMap {
         let key = self.next_key;
         self.next_key += 1;
 
-        let value = Handler {
-            fd: v,
-            sn: key,
-        };
+        let value = Handler { fd: v, sn: key };
 
         self.map.insert(key, value);
         key
@@ -487,10 +529,13 @@ impl HandlerMap {
         self.map.remove(&key);
     }
 
-fn get(&self, key: u64) -> Result<&Handler> {
+    fn get(&self, key: u64) -> Result<&Handler> {
         self.map.get(&key).ok_or(ExecuteError::UnknownHandle)
     }
 
+    fn get_mut(&mut self, key: u64) -> Result<&mut Handler> {
+        self.map.get_mut(&key).ok_or(ExecuteError::UnknownHandle)
+    }
 }
 
 struct FDMap<V> {
@@ -865,7 +910,10 @@ impl FuseBackend {
 
     fn get_fh_fuse_attr(&self, fh: &Handler) -> Result<fuse_attr_out> {
         println!("FUSE FHHHHH ATTR {:?}", fh.fd);
-        let filestat = fh.fd.fstatat(None, libc::AT_EMPTY_PATH).map_err(|e| ExecuteError::from(e))?;
+        let filestat = fh
+            .fd
+            .fstatat(None, libc::AT_EMPTY_PATH)
+            .map_err(|e| ExecuteError::from(e))?;
         println!("ANSWER {:?}", filestat.st_ino);
         let cached_ino = fh.sn;
 
@@ -1110,20 +1158,19 @@ impl FuseBackend {
         };
 
         Ok(request.send_arg(out_arg))
-
     }
 
     pub fn do_read(&mut self, request: &Request) -> Result<u32> {
         let guest_mem = request.memory;
         let in_arg: fuse_read_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
-        let fh = self.fd_map.get(in_arg.fh)?;
+        let fh = self.fd_map.get_mut(in_arg.fh)?;
 
-        error!("FUCK --READ-- {:?} {}", in_arg, fh);
+        fh.fd.lseek(in_arg.offset as libc::off_t, libc::SEEK_SET)?;
 
-        
+        error!("FUCK --READ-- {:?} {} {:?}", in_arg, fh.sn, fh.fd);
 
-        // Ok(0)
+        Ok(request.send_data(&mut fh.fd))
     }
 }
 

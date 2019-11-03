@@ -3,7 +3,7 @@
 
 use libc::stat as FileStat;
 use libc::statvfs as Statvfs;
-use libc::{self, c_char, c_int, c_void, c_uchar, dev_t, dirent, gid_t, mode_t, uid_t, DIR};
+use libc::{self, c_char, c_int, c_void, c_uchar, off_t, dev_t, dirent, gid_t, mode_t, uid_t, DIR};
 
 use std::mem::MaybeUninit;
 use std::os::unix::io::RawFd;
@@ -89,6 +89,10 @@ impl Fd {
             // It's safe because buf has been initialiezed.
             unsafe { Ok(buf.assume_init()) }
         }
+    }
+
+    pub fn lseek(&self, offset: off_t, whence: c_int) -> Result<off_t> {
+        libc_ret!(unsafe {libc::lseek(self.0, offset, whence)})
     }
 
 }

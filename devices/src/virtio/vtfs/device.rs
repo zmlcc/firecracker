@@ -20,7 +20,7 @@ use super::super::{
     ActivateError, ActivateResult, EpollConfigConstructor, Queue, VirtioDevice, TYPE_FS,
     VIRTIO_MMIO_INT_VRING,
 };
-use super::filesystem::{FuseBackend, Request};
+use super::fuse_backend::{FuseBackend, Request};
 
 use super::error::ExecuteError;
 

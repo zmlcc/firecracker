@@ -3,15 +3,14 @@
 
 use libc::stat as FileStat;
 use libc::statvfs as Statvfs;
-use libc::{self, c_char, c_int, c_void, c_uchar, off_t, dev_t, dirent, gid_t, mode_t, uid_t, DIR};
+use libc::{self, c_char, c_int, c_uchar, c_void, dev_t, dirent, gid_t, mode_t, off_t, uid_t, DIR};
 
 use std::mem::MaybeUninit;
 use std::os::unix::io::RawFd;
 
 use std::ffi::{CStr, CString};
 
-use std::io::{Read, IoSliceMut};
-
+use std::io::{IoSliceMut, Read};
 
 use std::cmp;
 use std::fmt::{self, Debug};
@@ -21,7 +20,6 @@ type Result<T> = result::Result<T, io::Error>;
 
 #[derive(Debug)]
 pub struct Fd(RawFd);
-
 
 macro_rules! libc_err {
     ($callback:expr) => {{
@@ -34,7 +32,6 @@ macro_rules! libc_err {
     }};
 }
 
-
 macro_rules! libc_ret {
     ($callback:expr) => {{
         let ret = $callback;
@@ -46,8 +43,17 @@ macro_rules! libc_ret {
     }};
 }
 
-
 impl Fd {
+    pub fn open(name: &CStr, flag: c_int) -> Result<Fd> {
+        let ret = unsafe { libc::open(name.as_ptr(), flag) };
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(Fd(ret as RawFd))
+        }
+    }
+
+
     pub fn openat(&self, name: Option<&CStr>, flag: c_int) -> Result<Fd> {
         let name_c = name.unwrap_or(Default::default()).as_ptr();
         let ret = unsafe { libc::openat(self.0, name_c, flag) };
@@ -92,26 +98,29 @@ impl Fd {
     }
 
     pub fn lseek(&self, offset: off_t, whence: c_int) -> Result<off_t> {
-        libc_ret!(unsafe {libc::lseek(self.0, offset, whence)})
+        libc_ret!(unsafe { libc::lseek(self.0, offset, whence) })
     }
-
 }
 
 impl Read for Fd {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let ret = libc_ret!(unsafe {
-            libc::read(self.0,
-                       buf.as_mut_ptr() as *mut c_void,
-                       buf.len() as libc::size_t)
+            libc::read(
+                self.0,
+                buf.as_mut_ptr() as *mut c_void,
+                buf.len() as libc::size_t,
+            )
         })?;
         Ok(ret as usize)
     }
 
     fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
         let ret = libc_ret!(unsafe {
-            libc::readv(self.0,
-                        bufs.as_ptr() as *const libc::iovec,
-                        cmp::min(bufs.len(), c_int::max_value() as usize) as c_int)
+            libc::readv(
+                self.0,
+                bufs.as_ptr() as *const libc::iovec,
+                cmp::min(bufs.len(), c_int::max_value() as usize) as c_int,
+            )
         })?;
         Ok(ret as usize)
     }
@@ -221,8 +230,6 @@ impl Debug for Entry {
             .finish()
     }
 }
-
-
 
 // fn libc_ret(ret: c_int) -> Result<c_int> {
 //     if ret < 0 {

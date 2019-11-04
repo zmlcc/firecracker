@@ -340,46 +340,46 @@ pub fn linkat(
     libc_err!(unsafe { libc::linkat(old_fd, old_name_c, new_fd, new_name_c, flag) })
 }
 
-struct Cred {
-    euid: uid_t,
-    egid: gid_t,
-}
+// struct Cred {
+//     euid: uid_t,
+//     egid: gid_t,
+// }
 
-impl Cred {
-    fn change_to(euid: uid_t, egid: gid_t) -> Result<Cred> {
-        let saved = unsafe {
-            Cred {
-                euid: libc::getuid(),
-                egid: libc::getgid(),
-            }
-        };
+// impl Cred {
+//     fn change_to(euid: uid_t, egid: gid_t) -> Result<Cred> {
+//         let saved = unsafe {
+//             Cred {
+//                 euid: libc::getuid(),
+//                 egid: libc::getgid(),
+//             }
+//         };
 
-        let ret = unsafe { libc::setegid(egid) };
-        if ret < 0 {
-            return Err(io::Error::last_os_error());
-        }
+//         let ret = unsafe { libc::setegid(egid) };
+//         if ret < 0 {
+//             return Err(io::Error::last_os_error());
+//         }
 
-        let ret = unsafe { libc::seteuid(euid) };
-        if ret < 0 {
-            let saved_err = io::Error::last_os_error();
-            unsafe { libc::setegid(saved.egid) };
-            return Err(saved_err);
-        }
-        Ok(saved)
-    }
+//         let ret = unsafe { libc::seteuid(euid) };
+//         if ret < 0 {
+//             let saved_err = io::Error::last_os_error();
+//             unsafe { libc::setegid(saved.egid) };
+//             return Err(saved_err);
+//         }
+//         Ok(saved)
+//     }
 
-    fn restore(&self) -> Result<()> {
-        libc_err!(unsafe { libc::seteuid(self.euid) })?;
-        libc_err!(unsafe { libc::setegid(self.egid) })
-    }
-}
+//     fn restore(&self) -> Result<()> {
+//         libc_err!(unsafe { libc::seteuid(self.euid) })?;
+//         libc_err!(unsafe { libc::setegid(self.egid) })
+//     }
+// }
 
-pub fn with_cred<F>(uid: uid_t, gid: gid_t, f: F) -> Result<()>
-where
-    F: FnOnce() -> Result<()>,
-{
-    let saved_cred = Cred::change_to(uid, gid)?;
-    let ret = f();
-    saved_cred.restore().unwrap();
-    ret
-}
+// pub fn with_cred<F>(uid: uid_t, gid: gid_t, f: F) -> Result<()>
+// where
+//     F: FnOnce() -> Result<()>,
+// {
+//     let saved_cred = Cred::change_to(uid, gid)?;
+//     let ret = f();
+//     saved_cred.restore().unwrap();
+//     ret
+// }

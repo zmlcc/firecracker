@@ -3,8 +3,8 @@
 
 mod device;
 mod error;
-mod fuse_backend;
 mod filesystem;
+mod fuse_backend;
 mod util;
 
 pub use self::device::Vtfs;

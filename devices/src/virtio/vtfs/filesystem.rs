@@ -53,7 +53,6 @@ impl Fd {
         }
     }
 
-
     pub fn openat(&self, name: Option<&CStr>, flag: c_int) -> Result<Fd> {
         let name_c = name.unwrap_or(Default::default()).as_ptr();
         let ret = unsafe { libc::openat(self.0, name_c, flag) };
@@ -64,9 +63,9 @@ impl Fd {
         }
     }
 
-    pub fn from_rawfd(fd: RawFd) -> Fd {
-        Fd(fd)
-    }
+    // pub fn from_rawfd(fd: RawFd) -> Fd {
+    //     Fd(fd)
+    // }
 
     pub fn reopen(&self, flag: c_int) -> Result<Fd> {
         let name = format!("/proc/self/fd/{}\0", self.0);
@@ -99,6 +98,79 @@ impl Fd {
 
     pub fn lseek(&self, offset: off_t, whence: c_int) -> Result<off_t> {
         libc_ret!(unsafe { libc::lseek(self.0, offset, whence) })
+    }
+
+    pub fn mknodat(&self, name: &CStr, mode: mode_t, dev: dev_t) -> Result<()> {
+        libc_err!(unsafe { libc::mknodat(self.0, name.as_ptr(), mode, dev) })
+    }
+
+    pub fn fstatvfs(&self) -> Result<Statvfs> {
+        let mut buf = MaybeUninit::<Statvfs>::uninit();
+        let ret = unsafe { libc::fstatvfs(self.0, buf.as_mut_ptr()) };
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            // It's safe because buf has been initialiezed.
+            unsafe { Ok(buf.assume_init()) }
+        }
+    }
+
+    pub fn fchown(&self, owner: uid_t, group: gid_t) -> Result<()> {
+        libc_err!(unsafe { libc::fchown(self.0, owner, group) })
+    }
+
+    pub fn unlinkat(&self, name: Option<&CStr>, flag: c_int) -> Result<()> {
+        let name_c = name.unwrap_or(Default::default()).as_ptr();
+        libc_err!(unsafe { libc::unlinkat(self.0, name_c, flag) })
+    }
+
+    pub fn mkdirat(&self, name: &CStr, mode: mode_t) -> Result<()> {
+        libc_err!(unsafe { libc::mkdirat(self.0, name.as_ptr(), mode) })
+    }
+
+    pub fn fchmod(&self, mode: mode_t) -> Result<()> {
+        libc_err!(unsafe { libc::fchmod(self.0, mode) })
+    }
+
+    pub fn symlinkat(&self, linkpath: &CStr, target: &CStr) -> Result<()> {
+        libc_err!(unsafe { libc::symlinkat(target.as_ptr(), self.0, linkpath.as_ptr()) })
+    }
+
+    pub fn readlinkat(&self, name: Option<&CStr>) -> Result<CString> {
+        let name_c = name.unwrap_or(Default::default()).as_ptr();
+        let mut buf = Vec::with_capacity(libc::PATH_MAX as usize);
+        let ret = unsafe {
+            libc::readlinkat(
+                self.0,
+                name_c,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.capacity(),
+            )
+        };
+
+        if ret < 0 {
+            Err(io::Error::last_os_error())
+        } else if ret as c_int >= libc::PATH_MAX {
+            Err(io::Error::from_raw_os_error(libc::ENAMETOOLONG))
+        } else {
+            // It's safe because the size of buf has been checked
+            unsafe {
+                buf.set_len(ret as usize);
+                Ok(CString::from_vec_unchecked(buf))
+            }
+        }
+    }
+
+    pub fn linkat(
+        &self,
+        old_name: Option<&CStr>,
+        new_fd: &Fd,
+        new_name: &CStr,
+        flag: c_int,
+    ) -> Result<()> {
+        let old_name_c = old_name.unwrap_or(Default::default()).as_ptr();
+        let new_name_c = new_name.as_ptr();
+        libc_err!(unsafe { libc::linkat(self.0, old_name_c, new_fd.0, new_name_c, flag) })
     }
 }
 
@@ -133,6 +205,7 @@ impl Read for Fd {
 
 impl Drop for Fd {
     fn drop(&mut self) {
+        error!("**FUCK** CLOSE FD {}", self.0);
         unsafe { libc::close(self.0) };
     }
 }
@@ -142,16 +215,27 @@ pub struct Dir(*mut DIR);
 unsafe impl Send for Dir {}
 
 impl Dir {
-    pub fn openat(raw_fd: RawFd, name: Option<&CStr>, flag: c_int) -> Result<Self> {
+    pub fn openat222(raw_fd: &Fd, name: Option<&CStr>, flag: c_int) -> Result<Self> {
         let dot_cstr = unsafe { CStr::from_bytes_with_nul_unchecked(b".\0") };
         let name_c = name.unwrap_or(dot_cstr).as_ptr();
-        let ret = unsafe { libc::openat(raw_fd, name_c, flag) };
+        let ret = unsafe { libc::openat(raw_fd.0, name_c, flag) };
         if ret < 0 {
             Err(io::Error::last_os_error())
         } else {
             Dir::from_fd(ret)
         }
     }
+
+    // pub fn openat(raw_fd: RawFd, name: Option<&CStr>, flag: c_int) -> Result<Self> {
+    //     let dot_cstr = unsafe { CStr::from_bytes_with_nul_unchecked(b".\0") };
+    //     let name_c = name.unwrap_or(dot_cstr).as_ptr();
+    //     let ret = unsafe { libc::openat(raw_fd, name_c, flag) };
+    //     if ret < 0 {
+    //         Err(io::Error::last_os_error())
+    //     } else {
+    //         Dir::from_fd(ret)
+    //     }
+    // }
 
     fn from_fd(fd: RawFd) -> Result<Self> {
         let d = unsafe { libc::fdopendir(fd) };
@@ -231,121 +315,115 @@ impl Debug for Entry {
     }
 }
 
-// fn libc_ret(ret: c_int) -> Result<c_int> {
-//     if ret < 0 {
-//             Err(io::Error::last_os_error())
-//         } else {
-//             Ok(ret)
-//         }
+
+
+// pub fn mknodat(dirfd: RawFd, name: &CStr, mode: mode_t, dev: dev_t) -> Result<()> {
+//     libc_err!(unsafe { libc::mknodat(dirfd, name.as_ptr(), mode, dev) })
 // }
 
-pub fn mknodat(dirfd: RawFd, name: &CStr, mode: mode_t, dev: dev_t) -> Result<()> {
-    libc_err!(unsafe { libc::mknodat(dirfd, name.as_ptr(), mode, dev) })
-}
+// pub fn mkdirat(dirfd: RawFd, name: &CStr, mode: mode_t) -> Result<()> {
+//     libc_err!(unsafe { libc::mkdirat(dirfd, name.as_ptr(), mode) })
+// }
 
-pub fn mkdirat(dirfd: RawFd, name: &CStr, mode: mode_t) -> Result<()> {
-    libc_err!(unsafe { libc::mkdirat(dirfd, name.as_ptr(), mode) })
-}
+// pub fn fchmod(dirfd: RawFd, mode: mode_t) -> Result<()> {
+//     libc_err!(unsafe { libc::fchmod(dirfd, mode) })
+// }
 
-pub fn fchmod(dirfd: RawFd, mode: mode_t) -> Result<()> {
-    libc_err!(unsafe { libc::fchmod(dirfd, mode) })
-}
+// pub fn fchown(dirfd: RawFd, owner: uid_t, group: gid_t) -> Result<()> {
+//     libc_err!(unsafe { libc::fchown(dirfd, owner, group) })
+// }
 
-pub fn fchown(dirfd: RawFd, owner: uid_t, group: gid_t) -> Result<()> {
-    libc_err!(unsafe { libc::fchown(dirfd, owner, group) })
-}
+// pub fn unlinkat(dirfd: RawFd, name: Option<&CStr>, flag: c_int) -> Result<()> {
+//     let name_c = name.unwrap_or(Default::default()).as_ptr();
+//     libc_err!(unsafe { libc::unlinkat(dirfd, name_c, flag) })
+// }
 
-pub fn unlinkat(dirfd: RawFd, name: Option<&CStr>, flag: c_int) -> Result<()> {
-    let name_c = name.unwrap_or(Default::default()).as_ptr();
-    libc_err!(unsafe { libc::unlinkat(dirfd, name_c, flag) })
-}
+// pub fn symlinkat(dirfd: RawFd, linkpath: &CStr, target: &CStr) -> Result<()> {
+//     libc_err!(unsafe { libc::symlinkat(target.as_ptr(), dirfd, linkpath.as_ptr()) })
+// }
 
-pub fn symlinkat(dirfd: RawFd, linkpath: &CStr, target: &CStr) -> Result<()> {
-    libc_err!(unsafe { libc::symlinkat(target.as_ptr(), dirfd, linkpath.as_ptr()) })
-}
+// pub fn readlinkat(dirfd: RawFd, name: Option<&CStr>) -> Result<CString> {
+//     let name_c = name.unwrap_or(Default::default()).as_ptr();
+//     let mut buf = Vec::with_capacity(libc::PATH_MAX as usize);
+//     let ret = unsafe {
+//         libc::readlinkat(
+//             dirfd,
+//             name_c,
+//             buf.as_mut_ptr() as *mut c_char,
+//             buf.capacity(),
+//         )
+//     };
 
-pub fn readlinkat(dirfd: RawFd, name: Option<&CStr>) -> Result<CString> {
-    let name_c = name.unwrap_or(Default::default()).as_ptr();
-    let mut buf = Vec::with_capacity(libc::PATH_MAX as usize);
-    let ret = unsafe {
-        libc::readlinkat(
-            dirfd,
-            name_c,
-            buf.as_mut_ptr() as *mut c_char,
-            buf.capacity(),
-        )
-    };
+//     if ret < 0 {
+//         Err(io::Error::last_os_error())
+//     } else if ret as c_int >= libc::PATH_MAX {
+//         Err(io::Error::from_raw_os_error(libc::ENAMETOOLONG))
+//     } else {
+//         // It's safe because the size of buf has been checked
+//         unsafe {
+//             buf.set_len(ret as usize);
+//             Ok(CString::from_vec_unchecked(buf))
+//         }
+//     }
+// }
 
-    if ret < 0 {
-        Err(io::Error::last_os_error())
-    } else if ret as c_int >= libc::PATH_MAX {
-        Err(io::Error::from_raw_os_error(libc::ENAMETOOLONG))
-    } else {
-        // It's safe because the size of buf has been checked
-        unsafe {
-            buf.set_len(ret as usize);
-            Ok(CString::from_vec_unchecked(buf))
-        }
-    }
-}
+// pub fn fstatat(dirfd: RawFd, name: Option<&CStr>, flag: c_int) -> Result<FileStat> {
+//     let name_c = name.unwrap_or(Default::default()).as_ptr();
+//     let mut buf = MaybeUninit::<FileStat>::uninit();
+//     let ret = unsafe { libc::fstatat(dirfd, name_c, buf.as_mut_ptr(), flag) };
+//     if ret < 0 {
+//         Err(io::Error::last_os_error())
+//     } else {
+//         // It's safe because buf has been initialiezed.
+//         unsafe { Ok(buf.assume_init()) }
+//     }
+// }
 
-pub fn fstatat(dirfd: RawFd, name: Option<&CStr>, flag: c_int) -> Result<FileStat> {
-    let name_c = name.unwrap_or(Default::default()).as_ptr();
-    let mut buf = MaybeUninit::<FileStat>::uninit();
-    let ret = unsafe { libc::fstatat(dirfd, name_c, buf.as_mut_ptr(), flag) };
-    if ret < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        // It's safe because buf has been initialiezed.
-        unsafe { Ok(buf.assume_init()) }
-    }
-}
+// pub fn fstatvfs(dirfd: RawFd) -> Result<Statvfs> {
+//     let mut buf = MaybeUninit::<Statvfs>::uninit();
+//     let ret = unsafe { libc::fstatvfs(dirfd, buf.as_mut_ptr()) };
+//     if ret < 0 {
+//         Err(io::Error::last_os_error())
+//     } else {
+//         // It's safe because buf has been initialiezed.
+//         unsafe { Ok(buf.assume_init()) }
+//     }
+// }
 
-pub fn fstatvfs(dirfd: RawFd) -> Result<Statvfs> {
-    let mut buf = MaybeUninit::<Statvfs>::uninit();
-    let ret = unsafe { libc::fstatvfs(dirfd, buf.as_mut_ptr()) };
-    if ret < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        // It's safe because buf has been initialiezed.
-        unsafe { Ok(buf.assume_init()) }
-    }
-}
+// pub fn openat(dirfd: RawFd, name: Option<&CStr>, flag: c_int) -> Result<RawFd> {
+//     let name_c = name.unwrap_or(Default::default()).as_ptr();
+//     let ret = unsafe { libc::openat(dirfd, name_c, flag) };
+//     if ret < 0 {
+//         Err(io::Error::last_os_error())
+//     } else {
+//         Ok(ret as RawFd)
+//     }
+// }
 
-pub fn openat(dirfd: RawFd, name: Option<&CStr>, flag: c_int) -> Result<RawFd> {
-    let name_c = name.unwrap_or(Default::default()).as_ptr();
-    let ret = unsafe { libc::openat(dirfd, name_c, flag) };
-    if ret < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(ret as RawFd)
-    }
-}
+// pub fn open(name: &CStr, flag: c_int) -> Result<RawFd> {
+//     let ret = unsafe { libc::open(name.as_ptr(), flag) };
+//     if ret < 0 {
+//         Err(io::Error::last_os_error())
+//     } else {
+//         Ok(ret as RawFd)
+//     }
+// }
 
-pub fn open(name: &CStr, flag: c_int) -> Result<RawFd> {
-    let ret = unsafe { libc::open(name.as_ptr(), flag) };
-    if ret < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(ret as RawFd)
-    }
-}
+// pub fn close(fd: RawFd) -> Result<()> {
+//     libc_err!(unsafe { libc::close(fd) })
+// }
 
-pub fn close(fd: RawFd) -> Result<()> {
-    libc_err!(unsafe { libc::close(fd) })
-}
-
-pub fn linkat(
-    old_fd: RawFd,
-    old_name: Option<&CStr>,
-    new_fd: RawFd,
-    new_name: &CStr,
-    flag: c_int,
-) -> Result<()> {
-    let old_name_c = old_name.unwrap_or(Default::default()).as_ptr();
-    let new_name_c = new_name.as_ptr();
-    libc_err!(unsafe { libc::linkat(old_fd, old_name_c, new_fd, new_name_c, flag) })
-}
+// pub fn linkat(
+//     old_fd: RawFd,
+//     old_name: Option<&CStr>,
+//     new_fd: RawFd,
+//     new_name: &CStr,
+//     flag: c_int,
+// ) -> Result<()> {
+//     let old_name_c = old_name.unwrap_or(Default::default()).as_ptr();
+//     let new_name_c = new_name.as_ptr();
+//     libc_err!(unsafe { libc::linkat(old_fd, old_name_c, new_fd, new_name_c, flag) })
+// }
 
 // struct Cred {
 //     euid: uid_t,

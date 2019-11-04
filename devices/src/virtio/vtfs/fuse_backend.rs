@@ -6,14 +6,14 @@ use std::mem;
 use std::result;
 
 use libc::stat as FileStat;
-use std::os::unix::io::AsRawFd;
-use std::os::unix::io::RawFd;
+// use std::os::unix::io::AsRawFd;
+// use std::os::unix::io::RawFd;
 
+// use super::filesystem::{
+//     close, fchmod, fchown, fstatat, fstatvfs, linkat, mkdirat, mknodat, open, openat, readlinkat,
+//     symlinkat, unlinkat,
+// };
 use std::ffi::{CStr, CString};
-use super::filesystem::{
-    close, fchmod, fchown, fstatat, fstatvfs, linkat, mkdirat, mknodat, open, openat, readlinkat,
-    symlinkat, unlinkat,
-};
 
 use super::filesystem::{Dir, Fd};
 
@@ -360,10 +360,10 @@ impl InodeHandler {
 
     fn lookup(&self, path: &CStr) -> Result<InodeHandler> {
         let oflag = libc::O_PATH | libc::O_NOFOLLOW;
-        let new_fd = openat(self.fd, Some(path), oflag)?;
+        let new_fd = self.fd.openat(Some(path), oflag)?;
 
         let at_flag = libc::AT_EMPTY_PATH | libc::AT_SYMLINK_NOFOLLOW;
-        let filestat = fstatat(new_fd, None, at_flag)?;
+        let filestat = new_fd.fstatat(None, at_flag)?;
 
         Ok(InodeHandler {
             fd: new_fd,
@@ -390,36 +390,40 @@ impl InodeHandler {
 
     fn metadata(&self) -> Result<FileStat> {
         let at_flag = libc::AT_EMPTY_PATH | libc::AT_SYMLINK_NOFOLLOW;
-        fstatat(self.fd, None, at_flag).map_err(|e| ExecuteError::from(e))
+        self.fd
+            .fstatat(None, at_flag)
+            .map_err(|e| ExecuteError::from(e))
     }
 
     fn opendir(&self) -> Result<Dir> {
         let oflg = libc::O_RDONLY;
-        Dir::openat(self.fd, None, oflg).map_err(|e| ExecuteError::from(e))
+        Dir::openat222(&self.fd, None, oflg).map_err(|e| ExecuteError::from(e))
     }
 
     fn fstatvfs(&self) -> Result<Statvfs> {
-        fstatvfs(self.as_raw_fd()).map_err(|e| ExecuteError::from(e))
+        self.fd.fstatvfs().map_err(|e| ExecuteError::from(e))
     }
 
     fn mknod(&self, name: &CStr, mode: mode_t, dev: dev_t) -> Result<()> {
-        mknodat(self.fd, name, mode, dev).map_err(|e| ExecuteError::from(e))
-    }
-}
-
-impl AsRawFd for InodeHandler {
-    fn as_raw_fd(&self) -> RawFd {
         self.fd
+            .mknodat(name, mode, dev)
+            .map_err(|e| ExecuteError::from(e))
     }
 }
 
-impl Drop for InodeHandler {
-    fn drop(&mut self) {
-        close(self.fd).unwrap_or_else(|e| {
-            error!("close file handler {} failed with error {}", self.fd, e);
-        });
-    }
-}
+// impl AsRawFd for InodeHandler {
+//     fn as_raw_fd(&self) -> RawFd {
+//         self.fd.0
+//     }
+// }
+
+// impl Drop for InodeHandler {
+//     fn drop(&mut self) {
+//         close(self.fd).unwrap_or_else(|e| {
+//             error!("close file handler {} failed with error {}", self.fd, e);
+//         });
+//     }
+// }
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 struct HostInode {
@@ -949,8 +953,8 @@ impl FuseBackend {
         if uid == 0 && gid == 0 {
             return Ok(());
         }
-        fchown(new_fd.as_raw_fd(), uid, gid).map_err(|e| {
-            let _ = unlinkat(new_fd.as_raw_fd(), None, libc::AT_REMOVEDIR);
+        new_fd.fd.fchown(uid, gid).map_err(|e| {
+            let _ = new_fd.fd.unlinkat(None, libc::AT_REMOVEDIR);
             ExecuteError::from(e)
         })
     }
@@ -976,7 +980,7 @@ impl FuseBackend {
         let mode = in_arg.mode | libc::S_IFDIR;
 
         let ino_fd = self.ino_map.get(request.in_header.nodeid)?;
-        mkdirat(ino_fd.as_raw_fd(), name, mode)?;
+        ino_fd.fd.mkdirat(name, mode)?;
         let new_fd = ino_fd.lookup(name)?;
         let out_arg = self.cccc(&request.in_header, new_fd)?;
 
@@ -997,7 +1001,7 @@ impl FuseBackend {
         let ino = request.in_header.nodeid;
         let ino_fd = self.ino_map.get(ino)?;
 
-        unlinkat(ino_fd.as_raw_fd(), Some(name), libc::AT_REMOVEDIR)?;
+        ino_fd.fd.unlinkat(Some(name), libc::AT_REMOVEDIR)?;
 
         // self.ino_map.remove(ino);
         Ok(request.send_err(0))
@@ -1016,7 +1020,7 @@ impl FuseBackend {
         let valid = in_arg.valid;
 
         if bit_intersect(valid, FATTR_MODE) {
-            fchmod(ino_fd.as_raw_fd(), in_arg.mode)?;
+            ino_fd.fd.fchmod(in_arg.mode)?;
         }
 
         if bit_intersect(valid, FATTR_UID | FATTR_GID) {
@@ -1032,7 +1036,7 @@ impl FuseBackend {
                 std::u32::MAX
             };
 
-            fchown(ino_fd.as_raw_fd(), uid, gid)?;
+            ino_fd.fd.fchown(uid, gid)?;
         }
 
         let filestat = ino_fd.metadata()?;
@@ -1077,7 +1081,7 @@ impl FuseBackend {
         let ino = request.in_header.nodeid;
         let ino_fd = self.ino_map.get(ino)?;
 
-        unlinkat(ino_fd.as_raw_fd(), Some(name), 0)?;
+        ino_fd.fd.unlinkat(Some(name), 0)?;
 
         Ok(request.send_err(0))
     }
@@ -1093,7 +1097,7 @@ impl FuseBackend {
 
         let ino_fd = self.ino_map.get(request.in_header.nodeid)?;
 
-        symlinkat(ino_fd.as_raw_fd(), name, link)?;
+        ino_fd.fd.symlinkat(name, link)?;
 
         let new_fd = ino_fd.lookup(name)?;
         let out_arg = self.cccc(&request.in_header, new_fd)?;
@@ -1108,7 +1112,7 @@ impl FuseBackend {
         let ino = request.in_header.nodeid;
         let ino_fd = self.ino_map.get(ino)?;
 
-        let link = readlinkat(ino_fd.as_raw_fd(), None)?;
+        let link = ino_fd.fd.readlinkat(None)?;
         Ok(request.send_slice(link.as_bytes_with_nul()))
     }
 
@@ -1122,11 +1126,13 @@ impl FuseBackend {
         guest_mem.read_slice_at_addr(&mut buf, pos)?;
         let name = CStr::from_bytes_with_nul(&buf)?;
 
-        let ino_fd = self.ino_map.get(request.in_header.nodeid)?.as_raw_fd();
+        let ino_fd = self.ino_map.get(request.in_header.nodeid)?;
 
         let old_fd = self.ino_map.get(in_arg.oldnodeid)?;
 
-        linkat(old_fd.as_raw_fd(), None, ino_fd, name, libc::AT_EMPTY_PATH)?;
+        old_fd
+            .fd
+            .linkat(None, &ino_fd.fd, name, libc::AT_EMPTY_PATH)?;
 
         let out_arg = self.get_ino_attr(old_fd)?;
 
@@ -1142,11 +1148,13 @@ impl FuseBackend {
 
         let ino_fd = self.ino_map.get(request.in_header.nodeid)?;
 
-        let eee_fd = Fd::from_rawfd(ino_fd.as_raw_fd());
+        // let eee_fd = Fd::from_rawfd(ino_fd.as_raw_fd());
+
+        let eee_fd = ino_fd;
 
         error!("FUCK OPEN {:?} {:?}", ino_fd, in_arg);
 
-        let fd = eee_fd.reopen(in_arg.flags as libc::c_int)?;
+        let fd = eee_fd.fd.reopen(in_arg.flags as libc::c_int)?;
 
         error!("FUCK OPEN222 {:?}", fd);
 

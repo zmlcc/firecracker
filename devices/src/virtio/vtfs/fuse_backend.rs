@@ -10,12 +10,12 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
 
 use std::ffi::{CStr, CString};
-use sys_util::fs::{
+use super::filesystem::{
     close, fchmod, fchown, fstatat, fstatvfs, linkat, mkdirat, mknodat, open, openat, readlinkat,
     symlinkat, unlinkat,
 };
 
-use sys_util::fs::{Dir, Fd};
+use super::filesystem::{Dir, Fd};
 
 use libc::statvfs as Statvfs;
 

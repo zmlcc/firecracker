@@ -17,8 +17,6 @@ mod eventfd;
 mod signal;
 mod struct_util;
 mod terminal;
-#[cfg(feature = "vtfs")]
-pub mod fs;
 
 pub use eventfd::*;
 pub use ioctl::*;

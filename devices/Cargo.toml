@@ -24,4 +24,4 @@ fuse_gen = { path = "../fuse_gen", optional = true}
 tempfile = ">=3.0.2"
 
 [features]
-vtfs = ["fuse_gen", "sys_util/vtfs"]
+vtfs = ["fuse_gen"]

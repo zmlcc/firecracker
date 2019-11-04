@@ -3,7 +3,7 @@
 
 use std::mem;
 
-use sys_util::fs::Entry;
+use super::filesystem::Entry;
 
 use memory_model::{GuestAddress, GuestMemory};
 

@@ -335,7 +335,7 @@ impl<'a> Request<'a> {
 
 #[derive(Debug)]
 struct InodeHandler {
-    fd: RawFd,
+    fd: Fd,
     host_inode: HostInode,
     nlookup: u64,
 }
@@ -344,9 +344,9 @@ impl InodeHandler {
     fn new(path: &str) -> Option<InodeHandler> {
         let oflag = libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_RDONLY;
         let name = CString::new(path).ok()?;
-        let fd = open(&name, oflag).ok()?;
+        let fd = Fd::open(&name, oflag).ok()?;
         let at_flag = libc::AT_EMPTY_PATH | libc::AT_SYMLINK_NOFOLLOW;
-        let filestat = fstatat(fd, None, at_flag).ok()?;
+        let filestat = fd.fstatat(None, at_flag).ok()?;
 
         Some(InodeHandler {
             fd: fd,

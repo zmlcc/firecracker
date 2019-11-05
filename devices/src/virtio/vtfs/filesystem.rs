@@ -40,6 +40,10 @@ macro_rules! libc_ret {
     }};
 }
 
+pub trait FdNum {
+    fn fd_num(&self) -> u64;
+}
+
 #[derive(Debug)]
 pub struct Fd(RawFd);
 
@@ -63,9 +67,7 @@ impl Fd {
         }
     }
 
-    pub fn fd_num(&self) -> u64 {
-        self.0 as u64
-    }
+
 
     pub fn reopen(&self, flag: c_int) -> Result<Fd> {
         let name = format!("/proc/self/fd/{}\0", self.0);
@@ -203,6 +205,12 @@ impl Read for Fd {
     // }
 }
 
+impl FdNum for Fd {
+        fn fd_num(&self) -> u64 {
+        self.0 as u64
+    }
+}
+
 impl Drop for Fd {
     fn drop(&mut self) {
         error!("**FUCK** CLOSE FD {}", self.0);
@@ -210,7 +218,10 @@ impl Drop for Fd {
     }
 }
 
-pub struct Dir(*mut DIR);
+pub struct Dir {
+    dir: *mut DIR,
+    fd: RawFd,
+}
 
 unsafe impl Send for Dir {}
 
@@ -244,7 +255,7 @@ impl Dir {
             unsafe { libc::close(fd) };
             return Err(e);
         };
-        Ok(Dir(d))
+        Ok(Dir{dir: d, fd: fd})
     }
 
     pub fn iter(&mut self) -> Iter {
@@ -252,10 +263,16 @@ impl Dir {
     }
 }
 
+impl FdNum for Dir {
+     fn fd_num(&self) -> u64 {
+        self.fd as u64
+    }
+}
+
 impl Drop for Dir {
     fn drop(&mut self) {
         error!("**FUCK** CLOSE DIR ");
-        unsafe { libc::closedir(self.0) };
+        unsafe { libc::closedir(self.dir) };
     }
 }
 
@@ -268,7 +285,7 @@ impl<'d> Iterator for Iter<'d> {
         unsafe {
             let mut ret = Entry(mem::zeroed());
             let mut entry_ptr = ptr::null_mut();
-            if libc::readdir_r((self.0).0, &mut ret.0, &mut entry_ptr) != 0 {
+            if libc::readdir_r((self.0).dir, &mut ret.0, &mut entry_ptr) != 0 {
                 return Some(Err(io::Error::last_os_error()));
             }
             if entry_ptr.is_null() {
@@ -281,7 +298,7 @@ impl<'d> Iterator for Iter<'d> {
 
 impl<'d> Drop for Iter<'d> {
     fn drop(&mut self) {
-        unsafe { libc::rewinddir((self.0).0) }
+        unsafe { libc::rewinddir((self.0).dir) }
     }
 }
 

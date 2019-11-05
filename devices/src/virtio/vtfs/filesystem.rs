@@ -18,9 +18,6 @@ use std::{io, mem, ptr, result};
 
 type Result<T> = result::Result<T, io::Error>;
 
-#[derive(Debug)]
-pub struct Fd(RawFd);
-
 macro_rules! libc_err {
     ($callback:expr) => {{
         let ret = $callback;
@@ -43,6 +40,9 @@ macro_rules! libc_ret {
     }};
 }
 
+#[derive(Debug)]
+pub struct Fd(RawFd);
+
 impl Fd {
     pub fn open(name: &CStr, flag: c_int) -> Result<Fd> {
         let ret = unsafe { libc::open(name.as_ptr(), flag) };
@@ -63,9 +63,9 @@ impl Fd {
         }
     }
 
-    // pub fn from_rawfd(fd: RawFd) -> Fd {
-    //     Fd(fd)
-    // }
+    pub fn fd_num(&self) -> u64 {
+        self.0 as u64
+    }
 
     pub fn reopen(&self, flag: c_int) -> Result<Fd> {
         let name = format!("/proc/self/fd/{}\0", self.0);
@@ -254,6 +254,7 @@ impl Dir {
 
 impl Drop for Dir {
     fn drop(&mut self) {
+        error!("**FUCK** CLOSE DIR ");
         unsafe { libc::closedir(self.0) };
     }
 }

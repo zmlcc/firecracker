@@ -125,6 +125,7 @@ impl<'a> Request<'a> {
             fuse_opcode_FUSE_LINK => fs.do_link(self),
             fuse_opcode_FUSE_OPEN => fs.do_open(self),
             fuse_opcode_FUSE_READ => fs.do_read(self),
+            fuse_opcode_FUSE_RELEASE => fs.do_release(self),
             _ => Err(ExecuteError::InvalidMethod),
         };
         error!("FUCK EXEC {:?}", ret);
@@ -143,6 +144,7 @@ impl<'a> Request<'a> {
             }
             // in_header + in_arg + out_header
             fuse_opcode_FUSE_RELEASEDIR
+            | fuse_opcode_FUSE_RELEASE
             | fuse_opcode_FUSE_ACCESS
             | fuse_opcode_FUSE_RMDIR
             | fuse_opcode_FUSE_UNLINK => {
@@ -411,19 +413,6 @@ impl InodeHandler {
     }
 }
 
-// impl AsRawFd for InodeHandler {
-//     fn as_raw_fd(&self) -> RawFd {
-//         self.fd.0
-//     }
-// }
-
-// impl Drop for InodeHandler {
-//     fn drop(&mut self) {
-//         close(self.fd).unwrap_or_else(|e| {
-//             error!("close file handler {} failed with error {}", self.fd, e);
-//         });
-//     }
-// }
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 struct HostInode {
@@ -1179,6 +1168,16 @@ impl FuseBackend {
         error!("FUCK --READ-- {:?} {} {:?}", in_arg, fh.sn, fh.fd);
 
         Ok(request.send_data(&mut fh.fd))
+    }
+
+    pub fn do_release(&mut self, request: &Request) -> Result<u32> {
+        let guest_mem = request.memory;
+        let in_arg: fuse_release_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
+
+        let fh = in_arg.fh;
+        error!("FUCK RELEASE {}", fh);
+        self.fd_map.remove(fh);
+        Ok(request.send_err(0))
     }
 }
 

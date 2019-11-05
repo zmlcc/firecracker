@@ -15,7 +15,7 @@ use libc::stat as FileStat;
 // };
 use std::ffi::{CStr, CString};
 
-use super::filesystem::{Dir, Fd};
+use super::filesystem::{Dir, Fd, FdNum};
 
 use libc::statvfs as Statvfs;
 
@@ -75,6 +75,7 @@ pub struct Request<'a> {
     in_header: fuse_in_header,
     in_arg_addr: GuestAddress,
     in_arg_len: u32,
+    in_data_buf: Vec<DataBuf>,
     out_header_addr: GuestAddress,
     out_arg_addr: GuestAddress,
     out_data_buf: Vec<DataBuf>,
@@ -96,6 +97,7 @@ impl<'a> Request<'a> {
                 .map_err(|_| VtfsError::InvalidOffset)?,
             in_arg_addr: GuestAddress(0),
             in_arg_len: 0,
+            in_data_buf: Vec::new(),
             out_header_addr: GuestAddress(0),
             out_arg_addr: GuestAddress(0),
             out_data_buf: Vec::new(),
@@ -172,6 +174,7 @@ impl<'a> Request<'a> {
                 self.out_arg_addr = out_arg_desc.addr;
             }
 
+            // in_header + in_arg + out_header + out_data
             fuse_opcode_FUSE_READ => {
                 let in_arg_desc = avail_desc
                     .next_descriptor()
@@ -200,6 +203,35 @@ impl<'a> Request<'a> {
                         len: aaa.len as usize,
                     });
                 }
+            }
+
+            // in_header + in_arg + in_data + out_header + out_arg
+            fuse_opcode_FUSE_WRITE => {
+                let in_arg_desc = avail_desc
+                    .next_descriptor()
+                    .ok_or(VtfsError::DescriptorChainTooShort)?;
+
+                self.in_arg_addr = in_arg_desc.addr;
+
+                let mut aaa = in_arg_desc.next_descriptor()
+                    .ok_or(VtfsError::DescriptorChainTooShort)?;;
+                while !aaa.is_write_only() {
+                    error!("FUCK CHECKCHAIN WRITE---- NEXT {} {} {}", aaa.has_next(), aaa.len, aaa.is_write_only());
+                    self.out_data_buf.push(DataBuf {
+                        addr: aaa.addr,
+                        len: aaa.len as usize,
+                    });
+                    aaa = aaa.next_descriptor().unwrap();
+                }
+
+                self.out_header_addr = aaa.addr;
+
+                let out_arg_desc = aaa
+                    .next_descriptor()
+                    .ok_or(VtfsError::DescriptorChainTooShort)?;
+
+                self.out_arg_addr = out_arg_desc.addr;
+                
             }
 
             // in_header + in_arg + out_header + out_arg
@@ -490,30 +522,62 @@ impl InodeMap {
     }
 }
 
-struct Handler {
-    fd: Fd,
-    sn: u64,
+// struct Handler {
+//     fd: Fd,
+//     sn: u64,
+// }
+
+// struct HandlerMap {
+//     map: HashMap<u64, Handler>,
+//     next_key: u64,
+// }
+
+// impl HandlerMap {
+//     fn new(start_key: u64) -> HandlerMap {
+//         HandlerMap {
+//             map: HashMap::default(),
+//             next_key: start_key,
+//         }
+//     }
+
+//     fn insert(&mut self, v: Fd) -> u64 {
+//         let key = self.next_key;
+//         self.next_key += 1;
+
+//         let value = Handler { fd: v, sn: key };
+
+//         self.map.insert(key, value);
+//         key
+//     }
+
+//     fn remove(&mut self, key: u64) {
+//         self.map.remove(&key);
+//     }
+
+//     fn get(&self, key: u64) -> Result<&Handler> {
+//         self.map.get(&key).ok_or(ExecuteError::UnknownHandle)
+//     }
+
+//     fn get_mut(&mut self, key: u64) -> Result<&mut Handler> {
+//         self.map.get_mut(&key).ok_or(ExecuteError::UnknownHandle)
+//     }
+// }
+
+
+struct HandlerMap222<T: FdNum> {
+    map: HashMap<u64, T>,
 }
 
-struct HandlerMap {
-    map: HashMap<u64, Handler>,
-    next_key: u64,
-}
-
-impl HandlerMap {
-    fn new(start_key: u64) -> HandlerMap {
-        HandlerMap {
+impl<T> HandlerMap222<T>
+where T: FdNum {
+    fn new() -> Self {
+        HandlerMap222 {
             map: HashMap::default(),
-            next_key: start_key,
         }
     }
 
-    fn insert(&mut self, v: Fd) -> u64 {
-        let key = self.next_key;
-        self.next_key += 1;
-
-        let value = Handler { fd: v, sn: key };
-
+    fn insert(&mut self, value: T) -> u64 {
+        let key = value.fd_num();
         self.map.insert(key, value);
         key
     }
@@ -522,52 +586,52 @@ impl HandlerMap {
         self.map.remove(&key);
     }
 
-    fn get(&self, key: u64) -> Result<&Handler> {
+    fn get(&self, key: u64) -> Result<&T> {
         self.map.get(&key).ok_or(ExecuteError::UnknownHandle)
     }
 
-    fn get_mut(&mut self, key: u64) -> Result<&mut Handler> {
+    fn get_mut(&mut self, key: u64) -> Result<&mut T> {
         self.map.get_mut(&key).ok_or(ExecuteError::UnknownHandle)
     }
 }
 
-struct FDMap<V> {
-    map: HashMap<u64, V>,
-    next_key: u64,
-}
+// struct FDMap<V> {
+//     map: HashMap<u64, V>,
+//     next_key: u64,
+// }
 
-impl<V> FDMap<V> {
-    fn new(start_key: u64) -> FDMap<V> {
-        FDMap {
-            map: HashMap::default(),
-            next_key: start_key,
-        }
-    }
+// impl<V> FDMap<V> {
+//     fn new(start_key: u64) -> FDMap<V> {
+//         FDMap {
+//             map: HashMap::default(),
+//             next_key: start_key,
+//         }
+//     }
 
-    fn insert(&mut self, value: V) -> u64 {
-        let key = self.next_key;
-        self.next_key += 1;
+//     fn insert(&mut self, value: V) -> u64 {
+//         let key = self.next_key;
+//         self.next_key += 1;
 
-        self.map.insert(key, value);
-        key
-    }
+//         self.map.insert(key, value);
+//         key
+//     }
 
-    fn remove(&mut self, key: u64) {
-        self.map.remove(&key);
-    }
+//     fn remove(&mut self, key: u64) {
+//         self.map.remove(&key);
+//     }
 
-    fn get(&self, key: u64) -> Result<&V> {
-        self.map.get(&key).ok_or(ExecuteError::UnknownHandle)
-    }
+//     fn get(&self, key: u64) -> Result<&V> {
+//         self.map.get(&key).ok_or(ExecuteError::UnknownHandle)
+//     }
 
-    fn get_mut(&mut self, key: u64) -> Result<&mut V> {
-        self.map.get_mut(&key).ok_or(ExecuteError::UnknownHandle)
-    }
-}
+//     fn get_mut(&mut self, key: u64) -> Result<&mut V> {
+//         self.map.get_mut(&key).ok_or(ExecuteError::UnknownHandle)
+//     }
+// }
 
 pub struct FuseBackend {
-    dir_map: FDMap<Dir>,
-    fd_map: HandlerMap,
+    dir_map: HandlerMap222<Dir>,
+    fd_map: HandlerMap222<Fd>,
     ino_map: InodeMap,
 }
 
@@ -578,8 +642,8 @@ impl FuseBackend {
         ino_map.add(root_inode);
 
         Some(FuseBackend {
-            dir_map: FDMap::new(1),
-            fd_map: HandlerMap::new(1),
+            dir_map: HandlerMap222::new(),
+            fd_map: HandlerMap222::new(),
             ino_map: ino_map,
         })
     }
@@ -901,17 +965,16 @@ impl FuseBackend {
         })
     }
 
-    fn get_fh_fuse_attr(&self, fh: &Handler) -> Result<fuse_attr_out> {
-        println!("FUSE FHHHHH ATTR {:?}", fh.fd);
+    fn get_fh_fuse_attr(&self, fh: &Fd) -> Result<fuse_attr_out> {
+        println!("FUSE FHHHHH ATTR {:?}", fh);
         let filestat = fh
-            .fd
             .fstatat(None, libc::AT_EMPTY_PATH)
             .map_err(|e| ExecuteError::from(e))?;
         println!("ANSWER {:?}", filestat.st_ino);
-        let cached_ino = fh.sn;
+        // let cached_ino = fh.sn;
 
         let attr = fuse_attr {
-            ino: cached_ino,
+            ino: fh.fd_num(),
             size: filestat.st_size as u64,
             blocks: filestat.st_size as u64,
             atime: filestat.st_atime as u64,
@@ -936,6 +999,42 @@ impl FuseBackend {
             attr: attr,
         })
     }
+
+    // fn get_fh_fuse_attr(&self, fh: &Handler) -> Result<fuse_attr_out> {
+    //     println!("FUSE FHHHHH ATTR {:?}", fh.fd);
+    //     let filestat = fh
+    //         .fd
+    //         .fstatat(None, libc::AT_EMPTY_PATH)
+    //         .map_err(|e| ExecuteError::from(e))?;
+    //     println!("ANSWER {:?}", filestat.st_ino);
+    //     let cached_ino = fh.sn;
+
+    //     let attr = fuse_attr {
+    //         ino: cached_ino,
+    //         size: filestat.st_size as u64,
+    //         blocks: filestat.st_size as u64,
+    //         atime: filestat.st_atime as u64,
+    //         mtime: filestat.st_mtime as u64,
+    //         ctime: filestat.st_ctime as u64,
+    //         atimensec: filestat.st_atime_nsec as u32,
+    //         mtimensec: filestat.st_mtime_nsec as u32,
+    //         ctimensec: filestat.st_ctime_nsec as u32,
+    //         mode: filestat.st_mode,
+    //         nlink: filestat.st_nlink as u32,
+    //         uid: filestat.st_uid,
+    //         gid: filestat.st_gid,
+    //         rdev: filestat.st_rdev as u32,
+    //         blksize: filestat.st_blksize as u32,
+    //         padding: 0,
+    //     };
+
+    //     Ok(fuse_attr_out {
+    //         attr_valid: 0,
+    //         attr_valid_nsec: 0,
+    //         dummy: 0,
+    //         attr: attr,
+    //     })
+    // }
 
     fn adjust_cred(req: &fuse_in_header, new_fd: &InodeHandler) -> Result<()> {
         let (uid, gid) = (req.uid, req.gid);
@@ -1161,13 +1260,26 @@ impl FuseBackend {
         let guest_mem = request.memory;
         let in_arg: fuse_read_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
-        let fh = self.fd_map.get_mut(in_arg.fh)?;
+        let mut fh = self.fd_map.get_mut(in_arg.fh)?;
 
-        fh.fd.lseek(in_arg.offset as libc::off_t, libc::SEEK_SET)?;
+        fh.lseek(in_arg.offset as libc::off_t, libc::SEEK_SET)?;
 
-        error!("FUCK --READ-- {:?} {} {:?}", in_arg, fh.sn, fh.fd);
+        error!("FUCK --READ-- {:?} {} {:?}", in_arg, fh.fd_num(), fh);
 
-        Ok(request.send_data(&mut fh.fd))
+        Ok(request.send_data(&mut fh))
+    }
+
+    pub fn do_write(&mut self, request: &Request) -> Result<u32> {
+        let guest_mem = request.memory;
+        let in_arg: fuse_write_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
+
+        let mut fh = self.fd_map.get_mut(in_arg.fh)?;
+
+        fh.lseek(in_arg.offset as libc::off_t, libc::SEEK_SET)?;
+
+        error!("FUCK --READ-- {:?} {} {:?}", in_arg, fh.fd_num(), fh);
+
+        Ok(request.send_data(&mut fh))
     }
 
     pub fn do_release(&mut self, request: &Request) -> Result<u32> {

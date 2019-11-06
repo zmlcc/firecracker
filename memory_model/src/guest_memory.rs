@@ -386,6 +386,23 @@ impl GuestMemory {
         })
     }
 
+    /// Inexact version of `write_from_memory`, return the actual write size.
+    pub fn write_from_memory_inexact<F>(
+        &self,
+        guest_addr: GuestAddress,
+        dst: &mut F,
+        count: usize,
+    ) -> Result<usize>
+    where
+        F: Write,
+    {
+        self.do_in_region(guest_addr, count, move |mapping, offset| {
+            mapping
+                .write_from_memory_inexact(offset, dst, count)
+                .map_err(|e| Error::MemoryAccess(guest_addr, e))
+        })
+    }
+
     /// Converts a GuestAddress into a pointer in the address space of this
     /// process. This should only be necessary for giving addresses to the
     /// kernel, as with vhost ioctls. Normal reads/writes to guest memory should

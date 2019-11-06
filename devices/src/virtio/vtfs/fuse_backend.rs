@@ -36,7 +36,7 @@ const FUSE_MAX_WRITE_SIZE: usize = 16 * 1024 * 1024;
 
 const FUSE_KERNEL_VERSION: u32 = 7;
 const FUSE_KERNEL_MINOR_VERSION: u32 = 19;
-const FUSE_INIT_FLAGS: u32 = FUSE_ASYNC_READ | FUSE_NO_OPENDIR_SUPPORT;
+const FUSE_INIT_FLAGS: u32 = FUSE_ASYNC_READ | FUSE_NO_OPENDIR_SUPPORT | FUSE_MAX_PAGES | FUSE_BIG_WRITES;
 const FUSE_DEFAULT_MAX_BACKGROUND: u16 = 12;
 const FUSE_DEFAULT_CONGESTION_THRESHOLD: u16 = (FUSE_DEFAULT_MAX_BACKGROUND * 3 / 4);
 
@@ -127,6 +127,7 @@ impl<'a> Request<'a> {
             fuse_opcode_FUSE_LINK => fs.do_link(self),
             fuse_opcode_FUSE_OPEN => fs.do_open(self),
             fuse_opcode_FUSE_READ => fs.do_read(self),
+            fuse_opcode_FUSE_WRITE => fs.do_write(self),
             fuse_opcode_FUSE_RELEASE => fs.do_release(self),
             _ => Err(ExecuteError::InvalidMethod),
         };
@@ -217,7 +218,7 @@ impl<'a> Request<'a> {
                     .ok_or(VtfsError::DescriptorChainTooShort)?;;
                 while !aaa.is_write_only() {
                     error!("FUCK CHECKCHAIN WRITE---- NEXT {} {} {}", aaa.has_next(), aaa.len, aaa.is_write_only());
-                    self.out_data_buf.push(DataBuf {
+                    self.in_data_buf.push(DataBuf {
                         addr: aaa.addr,
                         len: aaa.len as usize,
                     });
@@ -323,6 +324,39 @@ impl<'a> Request<'a> {
 
         our_header.len
     }
+
+    fn write_data<F: std::io::Write>(&self, dst: &mut F) -> u32 {
+        let mut write_size = 0;
+        for buf in self.in_data_buf.iter() {
+            let aaa = self
+                .memory
+                .write_from_memory_inexact(buf.addr, dst, buf.len)
+                .unwrap();
+            error!("FUCK SENDDATA {:?} {} {}", buf.addr, buf.len, aaa);
+            write_size += aaa;
+            if aaa != buf.len {
+                break;
+            }
+        }
+
+        write_size as u32
+    }
+
+    // fn send_header(&self, body_len: u32) -> u32 {
+    //     let our_header = fuse_out_header {
+    //         len: (mem::size_of::<fuse_out_header>() ) as u32 + body_len,
+    //         error: 0,
+    //         unique: self.in_header.unique,
+    //     };
+
+    //     // We use unwrap because the request parsing process already checked that the
+    //     // addr was valid.
+    //     self.memory
+    //         .write_obj_at_addr(our_header, self.out_header_addr)
+    //         .unwrap();
+
+    //     our_header.len
+    // }
 
     fn send_dirent_vec(&self, arg: Vec<FuseDirent>) -> u32 {
         let mut arg_len = 0;
@@ -660,6 +694,7 @@ impl FuseBackend {
         out_arg.max_background = FUSE_DEFAULT_MAX_BACKGROUND;
         out_arg.congestion_threshold = FUSE_DEFAULT_CONGESTION_THRESHOLD;
         out_arg.max_write = FUSE_MAX_WRITE_SIZE as u32;
+        out_arg.max_pages = 10;
 
         Ok(request.send_arg(out_arg))
     }
@@ -1277,9 +1312,17 @@ impl FuseBackend {
 
         fh.lseek(in_arg.offset as libc::off_t, libc::SEEK_SET)?;
 
-        error!("FUCK --READ-- {:?} {} {:?}", in_arg, fh.fd_num(), fh);
+        error!("FUCK --WRITE-- {:?} {} {:?}", in_arg, fh.fd_num(), fh);
 
-        Ok(request.send_data(&mut fh))
+        let write_size = request.write_data(&mut fh);
+
+        let out_arg = fuse_write_out {
+            size: write_size,
+            .. Default::default()
+        };
+
+        Ok(request.send_arg(out_arg))
+        
     }
 
     pub fn do_release(&mut self, request: &Request) -> Result<u32> {

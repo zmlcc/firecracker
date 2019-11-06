@@ -13,6 +13,8 @@ unsafe impl DataInit for fuse::fuse_attr_out {}
 unsafe impl DataInit for fuse::fuse_entry_out {}
 unsafe impl DataInit for fuse::fuse_forget_in {}
 unsafe impl DataInit for fuse::fuse_read_in {}
+unsafe impl DataInit for fuse::fuse_write_in {}
+unsafe impl DataInit for fuse::fuse_write_out {}
 unsafe impl DataInit for fuse::fuse_open_in {}
 unsafe impl DataInit for fuse::fuse_open_out {}
 unsafe impl DataInit for fuse::fuse_release_in {}

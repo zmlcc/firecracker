@@ -10,7 +10,7 @@ use std::os::unix::io::RawFd;
 
 use std::ffi::{CStr, CString};
 
-use std::io::{IoSliceMut, Read};
+use std::io::{IoSlice, IoSliceMut, Read, Write};
 
 use std::cmp;
 use std::fmt::{self, Debug};
@@ -198,11 +198,30 @@ impl Read for Fd {
         })?;
         Ok(ret as usize)
     }
+}
 
-    // #[inline]
-    // unsafe fn initializer(&self) -> Initializer {
-    //     Initializer::nop()
-    // }
+impl Write for Fd {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let ret = libc_ret!(unsafe {
+            libc::write(self.0,
+                        buf.as_ptr() as *const c_void,
+                        cmp::min(buf.len(), <libc::ssize_t>::max_value() as usize))
+        })?;
+        Ok(ret as usize)
+    }
+
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        let ret = libc_ret!(unsafe {
+            libc::writev(self.0,
+                         bufs.as_ptr() as *const libc::iovec,
+                         cmp::min(bufs.len(), c_int::max_value() as usize) as c_int)
+        })?;
+        Ok(ret as usize)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl FdNum for Fd {

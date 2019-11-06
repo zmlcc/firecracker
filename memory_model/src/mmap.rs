@@ -240,7 +240,7 @@ impl MemoryMapping {
     }
 
     /// Inexact version of `read_to_memory`, return the actual read size. 
-    pub fn read_to_memory_inexact<F>(&self, mem_offset: usize, src: &mut F, count: usize) -> Result<(usize)>
+    pub fn read_to_memory_inexact<F>(&self, mem_offset: usize, src: &mut F, count: usize) -> Result<usize>
     where
         F: Read,
     {
@@ -296,6 +296,25 @@ impl MemoryMapping {
             dst.write_all(src).map_err(Error::ReadFromSource)?;
         }
         Ok(())
+    }
+
+    /// Inexact version of `write_from_memory`, return the actual write size. 
+    pub fn write_from_memory_inexact<F>(&self, mem_offset: usize, dst: &mut F, count: usize) -> Result<usize>
+    where
+        F: Write,
+    {
+        let (mem_end, fail) = mem_offset.overflowing_add(count);
+        if fail || mem_end > self.size() {
+            return Err(Error::InvalidRange(mem_offset, count));
+        }
+        unsafe {
+            // It is safe to read from volatile memory. Accessing the guest
+            // memory as a slice is OK because nothing assumes another thread
+            // won't change what is loaded.
+            let src = &self.as_mut_slice()[mem_offset..mem_end];
+            let ret = dst.write(src).map_err(Error::ReadFromSource)?;
+        Ok(ret)
+        }
     }
 
     unsafe fn as_slice(&self) -> &[u8] {

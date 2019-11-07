@@ -36,7 +36,7 @@ const FUSE_MAX_WRITE_SIZE: usize = 16 * 1024 * 1024;
 
 const FUSE_KERNEL_VERSION: u32 = 7;
 const FUSE_KERNEL_MINOR_VERSION: u32 = 19;
-const FUSE_INIT_FLAGS: u32 = FUSE_ASYNC_READ | FUSE_NO_OPENDIR_SUPPORT | FUSE_MAX_PAGES | FUSE_BIG_WRITES;
+const FUSE_INIT_FLAGS: u32 = FUSE_ASYNC_READ | FUSE_MAX_PAGES | FUSE_BIG_WRITES ;
 const FUSE_DEFAULT_MAX_BACKGROUND: u16 = 12;
 const FUSE_DEFAULT_CONGESTION_THRESHOLD: u16 = (FUSE_DEFAULT_MAX_BACKGROUND * 3 / 4);
 
@@ -137,7 +137,7 @@ impl<'a> Request<'a> {
 
     #[allow(non_upper_case_globals)]
     fn check_chain(&mut self, avail_desc: &DescriptorChain) -> result::Result<(), VtfsError> {
-        error!("FUCK OPCODE {}", self.in_header.opcode);
+        error!("FUCK -------> OPCODE {}", self.in_header.opcode);
         match self.in_header.opcode {
             // only in_header
             fuse_opcode_FUSE_FORGET => {
@@ -686,6 +686,8 @@ impl FuseBackend {
         let guest_mem = request.memory;
         let in_arg: fuse_init_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
+        unsafe {libc::umask(0);}
+
         let mut out_arg = fuse_init_out::default();
         out_arg.major = FUSE_KERNEL_VERSION;
         out_arg.minor = FUSE_KERNEL_MINOR_VERSION;
@@ -883,6 +885,8 @@ impl FuseBackend {
         let name = CStr::from_bytes_with_nul(&buf)?;
 
         let ino_fd = self.ino_map.get(request.in_header.nodeid)?;
+
+        error!("FUCK --MKNOD-- {:?} ", in_arg);
 
         ino_fd.mknod(name, in_arg.mode, in_arg.rdev as dev_t)?;
 
@@ -1271,13 +1275,11 @@ impl FuseBackend {
 
         let ino_fd = self.ino_map.get(request.in_header.nodeid)?;
 
-        // let eee_fd = Fd::from_rawfd(ino_fd.as_raw_fd());
-
-        let eee_fd = ino_fd;
-
         error!("FUCK OPEN {:?} {:?}", ino_fd, in_arg);
 
-        let fd = eee_fd.fd.reopen(in_arg.flags as libc::c_int)?;
+        let flag = in_arg.flags as libc::c_int & !libc::O_NOFOLLOW;
+
+        let fd = ino_fd.fd.reopen(flag)?;
 
         error!("FUCK OPEN222 {:?}", fd);
 

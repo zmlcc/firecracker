@@ -486,7 +486,7 @@ struct HostInode {
     st_ino: u64,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct InodeMap {
     ino_map: HashMap<u64, InodeHandler>,
     attr_map: HashMap<HostInode, u64>,
@@ -663,6 +663,12 @@ where T: FdNum {
 //     }
 // }
 
+#[derive(Debug)]
+enum Handler<'a> {
+    Fd(&'a Fd),
+    Inode(&'a InodeHandler),
+}
+
 pub struct FuseBackend {
     dir_map: HandlerMap222<Dir>,
     fd_map: HandlerMap222<Fd>,
@@ -798,6 +804,9 @@ impl FuseBackend {
         };
 
         used_fd.inc_nlookup(1);
+
+        error!("FUCK LOOKUP 22222 {}", cached_ino);
+
         Ok(request.send_arg(out_arg))
     }
 
@@ -831,6 +840,7 @@ impl FuseBackend {
             open_flags: 0,
             padding: 0,
         };
+        error!("FUCK OPENDIR {:?}", out_arg);
         Ok(request.send_arg(out_arg))
     }
 
@@ -1138,19 +1148,43 @@ impl FuseBackend {
         let guest_mem = request.memory;
         let in_arg: fuse_setattr_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
+        
+        let valid = in_arg.valid;
         // TODO: FATTR_FH
         // in_arg.valid | FATTR_FH
-
+        
         let ino = request.in_header.nodeid;
-        let ino_fd = self.ino_map.get(ino)?;
+        // let ino_fd = self.ino_map.get(ino)?;
+        
+        // let fdh = if bit_intersect(valid, FATTR_FH) {
+            //     self.fd_map.get(in_arg.fh)?
+            // } else {
+                //     &self.ino_map.get(ino)?.fd
+                // };
+                
+        error!("FUCK SETATTR {:?} {}", in_arg, bit_intersect(valid, FATTR_FH));
+        error!("FUCK SETATTR {:?} ", self.ino_map);
+        let hdl = if bit_intersect(valid, FATTR_FH) {
+            Handler::Fd(self.fd_map.get(in_arg.fh)?)
+        } else {
+            Handler::Inode(self.ino_map.get(ino)?)
+        };
 
-        let valid = in_arg.valid;
+        error!("FUCK SETATTR HDL {:?}", hdl);
+
 
         if bit_intersect(valid, FATTR_MODE) {
-            ino_fd.fd.fchmod(in_arg.mode)?;
+            error!("FUCK SETATTR  MODE {:?}", hdl);
+
+            match hdl {
+                Handler::Fd(fd) => fd.fchmod(in_arg.mode)?,
+                Handler::Inode(inh) => inh.fd.fchmod(in_arg.mode)?,
+            }
         }
 
         if bit_intersect(valid, FATTR_UID | FATTR_GID) {
+            error!("FUCK SETATTR  UIDGID {:?}", hdl);
+
             let uid: uid_t = if bit_intersect(valid, FATTR_UID) {
                 in_arg.uid
             } else {
@@ -1163,36 +1197,97 @@ impl FuseBackend {
                 std::u32::MAX
             };
 
-            ino_fd.fd.fchown(uid, gid)?;
+            match hdl {
+                Handler::Fd(fd) => fd.fchown(uid, gid)?,
+                Handler::Inode(inh) => inh.fd.fchown(uid, gid)?,
+            }
         }
 
-        let filestat = ino_fd.metadata()?;
+        if bit_intersect(valid, FATTR_SIZE) {
+            error!("FUCK SETATTR  SIZE {:?}", hdl);
 
-        let attr = fuse_attr {
-            ino: ino,
-            size: filestat.st_size as u64,
-            blocks: filestat.st_size as u64,
-            atime: filestat.st_atime as u64,
-            mtime: filestat.st_mtime as u64,
-            ctime: filestat.st_ctime as u64,
-            atimensec: filestat.st_atime_nsec as u32,
-            mtimensec: filestat.st_mtime_nsec as u32,
-            ctimensec: filestat.st_ctime_nsec as u32,
-            mode: filestat.st_mode,
-            nlink: filestat.st_nlink as u32,
-            uid: filestat.st_uid,
-            gid: filestat.st_gid,
-            rdev: filestat.st_rdev as u32,
-            blksize: filestat.st_blksize as u32,
-            padding: 0,
-        };
+            let size = in_arg.size as libc::off_t;
+            match hdl {
+                Handler::Fd(fd) => {
+                    fd.ftruncate(size)?
+                }
+                Handler::Inode(inh) => {
+                    let new_fd = inh.fd.reopen(libc::O_RDWR)?;
+                    new_fd.ftruncate(size)?
+                }
+            }
+        }
 
-        let out_arg = fuse_attr_out {
-            attr_valid: 0,
-            attr_valid_nsec: 0,
-            dummy: 0,
-            attr: attr,
-        };
+        if bit_intersect(valid, FATTR_ATIME | FATTR_MTIME) {
+            
+            let mut tv: [libc::timespec; 2] = [
+                libc::timespec {
+                    tv_sec: 0,
+                    tv_nsec: libc::UTIME_OMIT,
+                }; 2
+                ];
+                
+                if bit_intersect(valid, FATTR_ATIME_NOW) {
+                    tv[0].tv_nsec = libc::UTIME_NOW;
+                } else if bit_intersect(valid, FATTR_ATIME){
+                    tv[0].tv_sec = in_arg.atime as libc::time_t;
+                    tv[0].tv_nsec = in_arg.atimensec as libc::c_long;
+                }
+                
+                if bit_intersect(valid, FATTR_MTIME_NOW) {
+                    tv[1].tv_nsec = libc::UTIME_NOW;
+                } else if bit_intersect(valid, FATTR_ATIME) {
+                    tv[1].tv_sec = in_arg.mtime as libc::time_t;
+                    tv[1].tv_nsec = in_arg.mtimensec as libc::c_long;
+                }
+                
+                error!("FUCK SETATTR  TIME  {:?} {} {} {} {}", hdl, tv[0].tv_sec, tv[0].tv_nsec, tv[1].tv_sec, tv[1].tv_nsec);
+                match hdl {
+                Handler::Fd(fd) => {
+                    fd.futimens(&tv[0])?;
+                }
+                Handler::Inode(inh) => {
+                    inh.fd.futimens(&tv[0])?;
+                }
+            }
+        }
+
+        let out_arg = match hdl {
+            Handler::Fd(fd) => {
+                self.get_fh_fuse_attr(fd)
+            }
+            Handler::Inode(inh) => {
+                self.get_ino_fuse_attr(inh)
+            }
+        }?;
+        
+        // let filestat = ino_fd.metadata()?;
+
+        // let attr = fuse_attr {
+        //     ino: ino,
+        //     size: filestat.st_size as u64,
+        //     blocks: filestat.st_size as u64,
+        //     atime: filestat.st_atime as u64,
+        //     mtime: filestat.st_mtime as u64,
+        //     ctime: filestat.st_ctime as u64,
+        //     atimensec: filestat.st_atime_nsec as u32,
+        //     mtimensec: filestat.st_mtime_nsec as u32,
+        //     ctimensec: filestat.st_ctime_nsec as u32,
+        //     mode: filestat.st_mode,
+        //     nlink: filestat.st_nlink as u32,
+        //     uid: filestat.st_uid,
+        //     gid: filestat.st_gid,
+        //     rdev: filestat.st_rdev as u32,
+        //     blksize: filestat.st_blksize as u32,
+        //     padding: 0,
+        // };
+
+        // let out_arg = fuse_attr_out {
+        //     attr_valid: 0,
+        //     attr_valid_nsec: 0,
+        //     dummy: 0,
+        //     attr: attr,
+        // };
 
         Ok(request.send_arg(out_arg))
     }
@@ -1336,6 +1431,9 @@ impl FuseBackend {
         self.fd_map.remove(fh);
         Ok(request.send_err(0))
     }
+
+    // pub fn do_flush(&mut self, request: &Request) -> Result<u32> {
+    // }
 }
 
 // fn bit_contains(token: u32, other: u32) -> bool {

@@ -138,6 +138,16 @@ impl Fd {
         libc_err!(unsafe { libc::symlinkat(target.as_ptr(), self.0, linkpath.as_ptr()) })
     }
 
+    pub fn ftruncate(&self, length: off_t) -> Result<()> {
+        libc_err!(unsafe { libc::ftruncate(self.0, length) })
+    }
+
+    pub fn futimens(&self, times: *const libc::timespec) -> Result<()> {
+        libc_err!(unsafe { libc::futimens(self.0, times) })
+    }
+
+    
+
     pub fn readlinkat(&self, name: Option<&CStr>) -> Result<CString> {
         let name_c = name.unwrap_or(Default::default()).as_ptr();
         let mut buf = Vec::with_capacity(libc::PATH_MAX as usize);

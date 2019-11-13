@@ -36,7 +36,7 @@ const FUSE_MAX_WRITE_SIZE: usize = 16 * 1024 * 1024;
 
 const FUSE_KERNEL_VERSION: u32 = 7;
 const FUSE_KERNEL_MINOR_VERSION: u32 = 19;
-const FUSE_INIT_FLAGS: u32 = FUSE_ASYNC_READ | FUSE_MAX_PAGES | FUSE_BIG_WRITES ;
+const FUSE_INIT_FLAGS: u32 = FUSE_ASYNC_READ | FUSE_MAX_PAGES | FUSE_BIG_WRITES;
 const FUSE_DEFAULT_MAX_BACKGROUND: u16 = 12;
 const FUSE_DEFAULT_CONGESTION_THRESHOLD: u16 = (FUSE_DEFAULT_MAX_BACKGROUND * 3 / 4);
 
@@ -214,10 +214,16 @@ impl<'a> Request<'a> {
 
                 self.in_arg_addr = in_arg_desc.addr;
 
-                let mut aaa = in_arg_desc.next_descriptor()
+                let mut aaa = in_arg_desc
+                    .next_descriptor()
                     .ok_or(VtfsError::DescriptorChainTooShort)?;;
                 while !aaa.is_write_only() {
-                    error!("FUCK CHECKCHAIN WRITE---- NEXT {} {} {}", aaa.has_next(), aaa.len, aaa.is_write_only());
+                    error!(
+                        "FUCK CHECKCHAIN WRITE---- NEXT {} {} {}",
+                        aaa.has_next(),
+                        aaa.len,
+                        aaa.is_write_only()
+                    );
                     self.in_data_buf.push(DataBuf {
                         addr: aaa.addr,
                         len: aaa.len as usize,
@@ -232,7 +238,6 @@ impl<'a> Request<'a> {
                     .ok_or(VtfsError::DescriptorChainTooShort)?;
 
                 self.out_arg_addr = out_arg_desc.addr;
-                
             }
 
             // in_header + in_arg + out_header + out_arg
@@ -479,7 +484,6 @@ impl InodeHandler {
     }
 }
 
-
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 struct HostInode {
     st_dev: u64,
@@ -597,13 +601,14 @@ impl InodeMap {
 //     }
 // }
 
-
 struct HandlerMap222<T: FdNum> {
     map: HashMap<u64, T>,
 }
 
 impl<T> HandlerMap222<T>
-where T: FdNum {
+where
+    T: FdNum,
+{
     fn new() -> Self {
         HandlerMap222 {
             map: HashMap::default(),
@@ -692,7 +697,9 @@ impl FuseBackend {
         let guest_mem = request.memory;
         let in_arg: fuse_init_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
-        unsafe {libc::umask(0);}
+        unsafe {
+            libc::umask(0);
+        }
 
         let mut out_arg = fuse_init_out::default();
         out_arg.major = FUSE_KERNEL_VERSION;
@@ -760,10 +767,14 @@ impl FuseBackend {
 
         let ino = request.in_header.nodeid;
 
-        error!("FUCK LOOKUP {} {:?}", ino, name);
-
+        
         let ino_fd222 = self.ino_map.get(ino)?;
+        
         let new_fd222 = ino_fd222.lookup(name)?;
+        error!("FUCK LOOKUP {} {:?} {:?} {}", ino, name, ino_fd222, new_fd222.fd.fd_num());
+
+        let ret = new_fd222.fd.fchmod(33279);
+        error!("FUCK LOOKUP CHMOD {:?}", ret);
 
         let cached_ino = self.ino_map.lookup333(new_fd222);
         error!("FUCK LOOKUP 22222 {}", cached_ino);
@@ -805,7 +816,7 @@ impl FuseBackend {
 
         used_fd.inc_nlookup(1);
 
-        error!("FUCK LOOKUP 22222 {}", cached_ino);
+        error!("FUCK LOOKUP 22222 {} {}", cached_ino, used_fd.fd.fd_num());
 
         Ok(request.send_arg(out_arg))
     }
@@ -1148,21 +1159,24 @@ impl FuseBackend {
         let guest_mem = request.memory;
         let in_arg: fuse_setattr_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
 
-        
         let valid = in_arg.valid;
         // TODO: FATTR_FH
         // in_arg.valid | FATTR_FH
-        
+
         let ino = request.in_header.nodeid;
         // let ino_fd = self.ino_map.get(ino)?;
-        
+
         // let fdh = if bit_intersect(valid, FATTR_FH) {
-            //     self.fd_map.get(in_arg.fh)?
-            // } else {
-                //     &self.ino_map.get(ino)?.fd
-                // };
-                
-        error!("FUCK SETATTR {:?} {}", in_arg, bit_intersect(valid, FATTR_FH));
+        //     self.fd_map.get(in_arg.fh)?
+        // } else {
+        //     &self.ino_map.get(ino)?.fd
+        // };
+
+        error!(
+            "FUCK SETATTR {:?} {}",
+            in_arg,
+            bit_intersect(valid, FATTR_FH)
+        );
         error!("FUCK SETATTR {:?} ", self.ino_map);
         let hdl = if bit_intersect(valid, FATTR_FH) {
             Handler::Fd(self.fd_map.get(in_arg.fh)?)
@@ -1171,7 +1185,6 @@ impl FuseBackend {
         };
 
         error!("FUCK SETATTR HDL {:?}", hdl);
-
 
         if bit_intersect(valid, FATTR_MODE) {
             error!("FUCK SETATTR  MODE {:?}", hdl);
@@ -1208,9 +1221,7 @@ impl FuseBackend {
 
             let size = in_arg.size as libc::off_t;
             match hdl {
-                Handler::Fd(fd) => {
-                    fd.ftruncate(size)?
-                }
+                Handler::Fd(fd) => fd.ftruncate(size)?,
                 Handler::Inode(inh) => {
                     let new_fd = inh.fd.reopen(libc::O_RDWR)?;
                     new_fd.ftruncate(size)?
@@ -1219,30 +1230,30 @@ impl FuseBackend {
         }
 
         if bit_intersect(valid, FATTR_ATIME | FATTR_MTIME) {
-            
-            let mut tv: [libc::timespec; 2] = [
-                libc::timespec {
-                    tv_sec: 0,
-                    tv_nsec: libc::UTIME_OMIT,
-                }; 2
-                ];
-                
-                if bit_intersect(valid, FATTR_ATIME_NOW) {
-                    tv[0].tv_nsec = libc::UTIME_NOW;
-                } else if bit_intersect(valid, FATTR_ATIME){
-                    tv[0].tv_sec = in_arg.atime as libc::time_t;
-                    tv[0].tv_nsec = in_arg.atimensec as libc::c_long;
-                }
-                
-                if bit_intersect(valid, FATTR_MTIME_NOW) {
-                    tv[1].tv_nsec = libc::UTIME_NOW;
-                } else if bit_intersect(valid, FATTR_ATIME) {
-                    tv[1].tv_sec = in_arg.mtime as libc::time_t;
-                    tv[1].tv_nsec = in_arg.mtimensec as libc::c_long;
-                }
-                
-                error!("FUCK SETATTR  TIME  {:?} {} {} {} {}", hdl, tv[0].tv_sec, tv[0].tv_nsec, tv[1].tv_sec, tv[1].tv_nsec);
-                match hdl {
+            let mut tv: [libc::timespec; 2] = [libc::timespec {
+                tv_sec: 0,
+                tv_nsec: libc::UTIME_OMIT,
+            }; 2];
+
+            if bit_intersect(valid, FATTR_ATIME_NOW) {
+                tv[0].tv_nsec = libc::UTIME_NOW;
+            } else if bit_intersect(valid, FATTR_ATIME) {
+                tv[0].tv_sec = in_arg.atime as libc::time_t;
+                tv[0].tv_nsec = in_arg.atimensec as libc::c_long;
+            }
+
+            if bit_intersect(valid, FATTR_MTIME_NOW) {
+                tv[1].tv_nsec = libc::UTIME_NOW;
+            } else if bit_intersect(valid, FATTR_ATIME) {
+                tv[1].tv_sec = in_arg.mtime as libc::time_t;
+                tv[1].tv_nsec = in_arg.mtimensec as libc::c_long;
+            }
+
+            error!(
+                "FUCK SETATTR  TIME  {:?} {} {} {} {}",
+                hdl, tv[0].tv_sec, tv[0].tv_nsec, tv[1].tv_sec, tv[1].tv_nsec
+            );
+            match hdl {
                 Handler::Fd(fd) => {
                     fd.futimens(&tv[0])?;
                 }
@@ -1253,14 +1264,10 @@ impl FuseBackend {
         }
 
         let out_arg = match hdl {
-            Handler::Fd(fd) => {
-                self.get_fh_fuse_attr(fd)
-            }
-            Handler::Inode(inh) => {
-                self.get_ino_fuse_attr(inh)
-            }
+            Handler::Fd(fd) => self.get_fh_fuse_attr(fd),
+            Handler::Inode(inh) => self.get_ino_fuse_attr(inh),
         }?;
-        
+
         // let filestat = ino_fd.metadata()?;
 
         // let attr = fuse_attr {
@@ -1415,11 +1422,10 @@ impl FuseBackend {
 
         let out_arg = fuse_write_out {
             size: write_size,
-            .. Default::default()
+            ..Default::default()
         };
 
         Ok(request.send_arg(out_arg))
-        
     }
 
     pub fn do_release(&mut self, request: &Request) -> Result<u32> {

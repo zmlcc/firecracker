@@ -773,9 +773,6 @@ impl FuseBackend {
         let new_fd222 = ino_fd222.lookup(name)?;
         error!("FUCK LOOKUP {} {:?} {:?} {}", ino, name, ino_fd222, new_fd222.fd.fd_num());
 
-        let ret = new_fd222.fd.fchmod(33279);
-        error!("FUCK LOOKUP CHMOD {:?}", ret);
-
         let cached_ino = self.ino_map.lookup333(new_fd222);
         error!("FUCK LOOKUP 22222 {}", cached_ino);
 

@@ -1241,7 +1241,7 @@ impl FuseBackend {
 
             if bit_intersect(valid, FATTR_MTIME_NOW) {
                 tv[1].tv_nsec = libc::UTIME_NOW;
-            } else if bit_intersect(valid, FATTR_ATIME) {
+            } else if bit_intersect(valid, FATTR_MTIME) {
                 tv[1].tv_sec = in_arg.mtime as libc::time_t;
                 tv[1].tv_nsec = in_arg.mtimensec as libc::c_long;
             }
@@ -1255,7 +1255,8 @@ impl FuseBackend {
                     fd.futimens(&tv[0])?;
                 }
                 Handler::Inode(inh) => {
-                    inh.fd.futimens(&tv[0])?;
+                    let new_fd = inh.fd.reopen(0)?;
+                    new_fd.futimens(&tv[0])?;
                 }
             }
         }

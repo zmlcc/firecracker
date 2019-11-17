@@ -146,7 +146,13 @@ impl Fd {
         libc_err!(unsafe { libc::futimens(self.0, times) })
     }
 
-    
+    pub fn utimens_self(&self, times: *const libc::timespec) -> Result<()> {
+        let name = format!("/proc/self/fd/{}\0", self.0);
+        // It should be safe because `\0` is at the end of name.
+        let name_c = unsafe { CStr::from_bytes_with_nul_unchecked(name.as_bytes()) };
+
+        libc_err!(unsafe { libc::utimensat(0, name_c.as_ptr(), times, 0) })
+    }
 
     pub fn readlinkat(&self, name: Option<&CStr>) -> Result<CString> {
         let name_c = name.unwrap_or(Default::default()).as_ptr();

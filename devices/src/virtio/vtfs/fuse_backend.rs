@@ -1170,7 +1170,7 @@ impl FuseBackend {
         // };
 
         error!(
-            "FUCK SETATTR {:?} {}",
+            "FUCK SETATTR {:?} {:?} {}", request.in_header,
             in_arg,
             bit_intersect(valid, FATTR_FH)
         );
@@ -1255,8 +1255,9 @@ impl FuseBackend {
                     fd.futimens(&tv[0])?;
                 }
                 Handler::Inode(inh) => {
-                    let new_fd = inh.fd.reopen(0)?;
-                    new_fd.futimens(&tv[0])?;
+                    // let new_fd = inh.fd.reopen(0)?;
+                    // new_fd.futimens(&tv[0])?;
+                    inh.fd.utimens_self(&tv[0])?
                 }
             }
         }

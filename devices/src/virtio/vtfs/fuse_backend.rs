@@ -107,6 +107,7 @@ impl<'a> Request<'a> {
 
     #[allow(non_upper_case_globals)]
     pub fn execute(&self, fs: &mut FuseBackend) -> Result<u32> {
+        error!("FUCK execute-> OPCODE {}", self.in_header.opcode);
         let ret = match self.in_header.opcode {
             fuse_opcode_FUSE_INIT => fs.do_init(self),
             fuse_opcode_FUSE_GETATTR => fs.do_getattr(self),
@@ -129,7 +130,11 @@ impl<'a> Request<'a> {
             fuse_opcode_FUSE_READ => fs.do_read(self),
             fuse_opcode_FUSE_WRITE => fs.do_write(self),
             fuse_opcode_FUSE_RELEASE => fs.do_release(self),
-            _ => Err(ExecuteError::InvalidMethod),
+            fuse_opcode_FUSE_RENAME => fs.do_rename(self),
+            _ => {
+                error!("FUCK InvalidMethod");
+                Err(ExecuteError::InvalidMethod)
+            },
         };
         error!("FUCK EXEC {:?}", ret);
         ret
@@ -150,7 +155,8 @@ impl<'a> Request<'a> {
             | fuse_opcode_FUSE_RELEASE
             | fuse_opcode_FUSE_ACCESS
             | fuse_opcode_FUSE_RMDIR
-            | fuse_opcode_FUSE_UNLINK => {
+            | fuse_opcode_FUSE_UNLINK 
+            | fuse_opcode_FUSE_RENAME => {
                 let in_arg_desc = avail_desc
                     .next_descriptor()
                     .ok_or(VtfsError::DescriptorChainTooShort)?;
@@ -187,13 +193,6 @@ impl<'a> Request<'a> {
                 self.in_arg_addr = in_arg_desc.addr;
                 self.in_arg_len = in_arg_desc.len;
                 self.out_header_addr = out_header_desc.addr;
-                // self.out_arg_addr = out_arg_desc.addr;
-
-                // error!("FUCK CHECKCHAIN READ {} {} {}", out_arg_desc.is_write_only(), out_arg_desc.has_next(), out_arg_desc.len);
-
-                // let out_arg_desc = out_header_desc
-                //     .next_descriptor()
-                //     .ok_or(VtfsError::DescriptorChainTooShort)?;
 
                 let mut aaa = out_header_desc;
                 while aaa.has_next() {
@@ -1437,13 +1436,37 @@ impl FuseBackend {
         Ok(request.send_err(0))
     }
 
-    // pub fn do_flush(&mut self, request: &Request) -> Result<u32> {
-    // }
+    pub fn do_rename(&mut self, request: &Request) -> Result<u32> {
+        let guest_mem = request.memory;
+        let in_arg: fuse_rename_in = guest_mem.read_obj_from_addr(request.in_arg_addr)?;
+
+        let name_len = request.in_arg_len as usize - mem::size_of_val(&in_arg);
+        let mut buf = vec![0u8; name_len];
+        let pos = request.in_arg_addr.unchecked_add(mem::size_of_val(&in_arg));
+        
+        guest_mem.read_slice_at_addr(&mut buf, pos)?;
+
+        let (oldname_c, newname_c) = get_c_string_slice(&buf);
+
+        let oldname = CStr::from_bytes_with_nul(&oldname_c)?;
+        let newname = CStr::from_bytes_with_nul(&newname_c)?;
+
+        error!("FUCK RENAME {:?} {:?}", oldname, newname);
+
+        let old_ino = self.ino_map.get(request.in_header.nodeid)?;
+        let new_ino = self.ino_map.get(in_arg.newdir)?;
+        error!("FUCK RENAME {:?} {:?}", old_ino, new_ino);
+
+        old_ino.fd.renameat(oldname, &new_ino.fd, newname)?;
+
+        Ok(request.send_err(0))
+
+
+        
+    }
 }
 
-// fn bit_contains(token: u32, other: u32) -> bool {
-//     (token & other) == other
-// }
+
 
 fn bit_intersect(token: u32, other: u32) -> bool {
     (token & other) != 0

@@ -121,6 +121,7 @@ impl VtfsEpollHandler {
                     });
                 }
                 Err(_e) => {
+                    error!("FUCK PARSE {:?}", _e);
                     len = 0;
                 }
             }

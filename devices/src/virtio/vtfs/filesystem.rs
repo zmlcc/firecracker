@@ -190,6 +190,17 @@ impl Fd {
         let new_name_c = new_name.as_ptr();
         libc_err!(unsafe { libc::linkat(self.0, old_name_c, new_fd.0, new_name_c, flag) })
     }
+
+    pub fn renameat(
+        &self,
+        old_name: &CStr,
+        new_fd: &Fd,
+        new_name: &CStr,
+    ) -> Result<()> {
+        let old_name_c = old_name.as_ptr();
+        let new_name_c = new_name.as_ptr();
+        libc_err!(unsafe { libc::renameat(self.0, old_name_c, new_fd.0, new_name_c) })
+    }
 }
 
 impl Read for Fd {

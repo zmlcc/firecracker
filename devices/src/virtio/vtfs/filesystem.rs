@@ -1,22 +1,19 @@
 // Copyright 2019 UCloud.cn, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use libc::stat as FileStat;
-use libc::statvfs as Statvfs;
-use libc::{self, c_char, c_int, c_uchar, c_void, dev_t, dirent, gid_t, mode_t, off_t, uid_t, DIR};
-
-use std::mem::MaybeUninit;
-use std::os::unix::io::RawFd;
-
-use std::ffi::{CStr, CString};
-
-use std::io::{IoSlice, IoSliceMut, Read, Write};
+use libc::{
+    self, c_char, c_int, c_uchar, c_void, dev_t, dirent, gid_t, mode_t, off_t, stat as FileStat,
+    statvfs as Statvfs, uid_t, DIR,
+};
 
 use std::cmp;
+use std::ffi::{CStr, CString};
 use std::fmt::{self, Debug};
-use std::{io, mem, ptr, result};
+use std::io::{self, IoSlice, IoSliceMut, Read, Write};
+use std::mem::{self, MaybeUninit};
+use std::os::unix::io::RawFd;
 
-type Result<T> = result::Result<T, io::Error>;
+type Result<T> = std::result::Result<T, io::Error>;
 
 macro_rules! libc_err {
     ($callback:expr) => {{
@@ -49,37 +46,33 @@ pub struct Fd(RawFd);
 
 impl Fd {
     pub fn open(name: &CStr, flag: c_int) -> Result<Fd> {
-        let ret = unsafe { libc::open(name.as_ptr(), flag) };
-        if ret < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(Fd(ret as RawFd))
-        }
+        let ret = libc_ret!(unsafe { libc::open(name.as_ptr(), flag) })?;
+        Ok(Fd(ret as RawFd))
     }
 
     pub fn openat(&self, name: Option<&CStr>, flag: c_int) -> Result<Fd> {
         let name_c = name.unwrap_or(Default::default()).as_ptr();
-        let ret = unsafe { libc::openat(self.0, name_c, flag) };
-        if ret < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(Fd(ret as RawFd))
-        }
+        let ret = libc_ret!(unsafe { libc::openat(self.0, name_c, flag) })?;
+        Ok(Fd(ret as RawFd))
     }
 
-    pub fn reopen(&self, flag: c_int) -> Result<Fd> {
+    pub fn open_self(&self, flag: c_int) -> Result<Fd> {
+        let name = format!("/proc/self/fd/{}\0", self.0);
+        // It should be safe because `\0` is at the end of name.
+        let name_c = unsafe { CStr::from_bytes_with_nul_unchecked(name.as_bytes()) };
+        
+        let ret = libc_ret!(unsafe { libc::open(name_c.as_ptr(), flag) })?;
+        Ok(Fd(ret as RawFd))
+    }
+    
+    pub fn utimens_self(&self, times: *const libc::timespec) -> Result<()> {
         let name = format!("/proc/self/fd/{}\0", self.0);
         // It should be safe because `\0` is at the end of name.
         let name_c = unsafe { CStr::from_bytes_with_nul_unchecked(name.as_bytes()) };
 
-        let ret = unsafe { libc::open(name_c.as_ptr(), flag) };
-        if ret < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(Fd(ret as RawFd))
-        }
+        libc_err!(unsafe { libc::utimensat(0, name_c.as_ptr(), times, 0) })
     }
-
+    
     pub fn fstatat(&self, name: Option<&CStr>, flag: c_int) -> Result<FileStat> {
         let (name, flag) = match name {
             Some(n) => (n, flag),
@@ -87,13 +80,8 @@ impl Fd {
         };
 
         let mut buf = MaybeUninit::<FileStat>::uninit();
-        let ret = unsafe { libc::fstatat(self.0, name.as_ptr(), buf.as_mut_ptr(), flag) };
-        if ret < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            // It's safe because buf has been initialiezed.
-            unsafe { Ok(buf.assume_init()) }
-        }
+        libc_err!(unsafe { libc::fstatat(self.0, name.as_ptr(), buf.as_mut_ptr(), flag) })?;
+        unsafe { Ok(buf.assume_init()) }
     }
 
     pub fn lseek(&self, offset: off_t, whence: c_int) -> Result<off_t> {
@@ -144,13 +132,6 @@ impl Fd {
         libc_err!(unsafe { libc::futimens(self.0, times) })
     }
 
-    pub fn utimens_self(&self, times: *const libc::timespec) -> Result<()> {
-        let name = format!("/proc/self/fd/{}\0", self.0);
-        // It should be safe because `\0` is at the end of name.
-        let name_c = unsafe { CStr::from_bytes_with_nul_unchecked(name.as_bytes()) };
-
-        libc_err!(unsafe { libc::utimensat(0, name_c.as_ptr(), times, 0) })
-    }
 
     pub fn readlinkat(&self, name: Option<&CStr>) -> Result<CString> {
         let name_c = name.unwrap_or(Default::default()).as_ptr();
@@ -327,7 +308,7 @@ impl<'d> Iterator for Iter<'d> {
     fn next(&mut self) -> Option<Self::Item> {
         unsafe {
             let mut ret = Entry(mem::zeroed());
-            let mut entry_ptr = ptr::null_mut();
+            let mut entry_ptr = std::ptr::null_mut();
             if libc::readdir_r((self.0).dir, &mut ret.0, &mut entry_ptr) != 0 {
                 return Some(Err(io::Error::last_os_error()));
             }

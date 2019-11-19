@@ -22,7 +22,6 @@ use super::super::{
 };
 use super::fuse_backend::{FuseBackend, Request};
 
-
 const CONFIG_TAG_SIZE: usize = 36;
 const CONFIG_NUM_QUEUES_SIZE: usize = 4;
 const CONFIG_SPACE_SIZE: usize = CONFIG_TAG_SIZE + CONFIG_NUM_QUEUES_SIZE;

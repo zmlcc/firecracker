@@ -28,7 +28,7 @@ use memory_model::{Address, GuestAddress, GuestMemory};
 
 use super::super::DescriptorChain;
 
-use super::error::{ExecuteError,VtfsError};
+use super::error::{ExecuteError, VtfsError};
 
 /// The max size of write requests from the kernel. The absolute minimum is 4k,
 /// FUSE recommends at least 128k, max 16M. The FUSE default is 128k.
@@ -42,13 +42,11 @@ const FUSE_DEFAULT_CONGESTION_THRESHOLD: u16 = (FUSE_DEFAULT_MAX_BACKGROUND * 3 
 
 type Result<T> = result::Result<T, ExecuteError>;
 
-
 struct DataBuf {
     addr: GuestAddress,
     len: usize,
 }
 
-// #[derive(Clone)]
 pub struct Request<'a> {
     memory: &'a GuestMemory,
     in_header: fuse_in_header,
@@ -81,7 +79,14 @@ impl<'a> Request<'a> {
             out_arg_addr: GuestAddress(0),
             out_data_buf: Vec::new(),
         };
-        r.check_chain(avail_desc).map(|_| r)
+
+        match r.check_chain(avail_desc) {
+            Ok(()) => Ok(r),
+            Err(e) => {
+                // TODO: Metrics
+                Err(e)
+            }
+        }
     }
 
     #[allow(non_upper_case_globals)]
@@ -113,7 +118,7 @@ impl<'a> Request<'a> {
             _ => {
                 error!("FUCK InvalidMethod");
                 Err(ExecuteError::InvalidMethod)
-            },
+            }
         };
         error!("FUCK EXEC {:?}", ret);
         ret.unwrap_or_else(|e| match e {
@@ -152,14 +157,16 @@ impl<'a> Request<'a> {
             fuse_opcode_FUSE_FORGET => {
                 self.in_arg_addr = avail_desc
                     .addr
-                    .unchecked_add(mem::size_of::<fuse_in_header>());
+                    .checked_add(mem::size_of::<fuse_in_header>())
+                    .ok_or(VtfsError::DescriptorChainTooShort)?;
             }
+
             // in_header + in_arg + out_header
             fuse_opcode_FUSE_RELEASEDIR
             | fuse_opcode_FUSE_RELEASE
             | fuse_opcode_FUSE_ACCESS
             | fuse_opcode_FUSE_RMDIR
-            | fuse_opcode_FUSE_UNLINK 
+            | fuse_opcode_FUSE_UNLINK
             | fuse_opcode_FUSE_RENAME => {
                 let in_arg_desc = avail_desc
                     .next_descriptor()
@@ -172,6 +179,7 @@ impl<'a> Request<'a> {
                     .ok_or(VtfsError::DescriptorChainTooShort)?;
                 self.out_header_addr = out_header_desc.addr;
             }
+
             // in_header + out_header + out_arg
             fuse_opcode_FUSE_STATFS | fuse_opcode_FUSE_READLINK => {
                 let out_header_desc = avail_desc
@@ -190,21 +198,22 @@ impl<'a> Request<'a> {
                 let in_arg_desc = avail_desc
                     .next_descriptor()
                     .ok_or(VtfsError::DescriptorChainTooShort)?;
+                self.in_arg_addr = in_arg_desc.addr;
+                self.in_arg_len = in_arg_desc.len;
+
                 let out_header_desc = in_arg_desc
                     .next_descriptor()
                     .ok_or(VtfsError::DescriptorChainTooShort)?;
-
-                self.in_arg_addr = in_arg_desc.addr;
-                self.in_arg_len = in_arg_desc.len;
                 self.out_header_addr = out_header_desc.addr;
 
-                let mut aaa = out_header_desc;
-                while aaa.has_next() {
-                    aaa = aaa.next_descriptor().unwrap();
-                    error!("FUCK CHECKCHAIN READ NEXT {} {}", aaa.has_next(), aaa.len);
+                let mut tmp = out_header_desc;
+                while tmp.has_next() {
+                    tmp = tmp
+                        .next_descriptor()
+                        .ok_or(VtfsError::DescriptorChainTooShort)?;
                     self.out_data_buf.push(DataBuf {
-                        addr: aaa.addr,
-                        len: aaa.len as usize,
+                        addr: tmp.addr,
+                        len: tmp.len as usize,
                     });
                 }
             }
@@ -214,37 +223,41 @@ impl<'a> Request<'a> {
                 let in_arg_desc = avail_desc
                     .next_descriptor()
                     .ok_or(VtfsError::DescriptorChainTooShort)?;
-
                 self.in_arg_addr = in_arg_desc.addr;
 
-                let mut aaa = in_arg_desc
-                    .next_descriptor()
-                    .ok_or(VtfsError::DescriptorChainTooShort)?;;
-                while !aaa.is_write_only() {
-                    error!(
-                        "FUCK CHECKCHAIN WRITE---- NEXT {} {} {}",
-                        aaa.has_next(),
-                        aaa.len,
-                        aaa.is_write_only()
-                    );
-                    self.in_data_buf.push(DataBuf {
-                        addr: aaa.addr,
-                        len: aaa.len as usize,
-                    });
-                    aaa = aaa.next_descriptor().unwrap();
-                }
-
-                self.out_header_addr = aaa.addr;
-
-                let out_arg_desc = aaa
+                let mut tmp = in_arg_desc
                     .next_descriptor()
                     .ok_or(VtfsError::DescriptorChainTooShort)?;
+                while !tmp.is_write_only() {
+                    self.in_data_buf.push(DataBuf {
+                        addr: tmp.addr,
+                        len: tmp.len as usize,
+                    });
+                    tmp = tmp
+                        .next_descriptor()
+                        .ok_or(VtfsError::DescriptorChainTooShort)?;
+                }
 
+                self.out_header_addr = tmp.addr;
+
+                let out_arg_desc = tmp
+                    .next_descriptor()
+                    .ok_or(VtfsError::DescriptorChainTooShort)?;
                 self.out_arg_addr = out_arg_desc.addr;
             }
 
             // in_header + in_arg + out_header + out_arg
-            _ => {
+            fuse_opcode_FUSE_INIT
+            | fuse_opcode_FUSE_GETATTR
+            | fuse_opcode_FUSE_LOOKUP
+            | fuse_opcode_FUSE_OPENDIR
+            | fuse_opcode_FUSE_READDIR
+            | fuse_opcode_FUSE_MKNOD
+            | fuse_opcode_FUSE_MKDIR
+            | fuse_opcode_FUSE_SETATTR
+            | fuse_opcode_FUSE_SYMLINK
+            | fuse_opcode_FUSE_LINK
+            | fuse_opcode_FUSE_OPEN => {
                 let in_arg_desc = avail_desc
                     .next_descriptor()
                     .ok_or(VtfsError::DescriptorChainTooShort)?;
@@ -261,6 +274,9 @@ impl<'a> Request<'a> {
                 self.out_header_addr = out_header_desc.addr;
                 self.out_arg_addr = out_arg_desc.addr;
             }
+
+            // unkown opcode
+            _ => return Err(VtfsError::UnknownFuseOpcode),
         }
 
         Ok(())
@@ -312,7 +328,7 @@ impl<'a> Request<'a> {
                 .read_to_memory_inexact(buf.addr, src, buf.len)
                 .unwrap();
             error!("FUCK SENDDATA {:?} {} {}", buf.addr, buf.len, aaa);
-            if aaa == 0 {
+            if aaa != buf.len {
                 break;
             }
             read_size += aaa;
@@ -754,11 +770,16 @@ impl FuseBackend {
 
         let ino = request.in_header.nodeid;
 
-        
         let ino_fd222 = self.ino_map.get(ino)?;
-        
+
         let new_fd222 = ino_fd222.lookup(name)?;
-        error!("FUCK LOOKUP {} {:?} {:?} {}", ino, name, ino_fd222, new_fd222.fd.fd_num());
+        error!(
+            "FUCK LOOKUP {} {:?} {:?} {}",
+            ino,
+            name,
+            ino_fd222,
+            new_fd222.fd.fd_num()
+        );
 
         let cached_ino = self.ino_map.lookup333(new_fd222);
         error!("FUCK LOOKUP 22222 {}", cached_ino);
@@ -1157,7 +1178,8 @@ impl FuseBackend {
         // };
 
         error!(
-            "FUCK SETATTR {:?} {:?} {}", request.in_header,
+            "FUCK SETATTR {:?} {:?} {}",
+            request.in_header,
             in_arg,
             bit_intersect(valid, FATTR_FH)
         );
@@ -1431,7 +1453,7 @@ impl FuseBackend {
         let name_len = request.in_arg_len as usize - mem::size_of_val(&in_arg);
         let mut buf = vec![0u8; name_len];
         let pos = request.in_arg_addr.unchecked_add(mem::size_of_val(&in_arg));
-        
+
         guest_mem.read_slice_at_addr(&mut buf, pos)?;
 
         let (oldname_c, newname_c) = get_c_string_slice(&buf);
@@ -1448,13 +1470,8 @@ impl FuseBackend {
         old_ino.fd.renameat(oldname, &new_ino.fd, newname)?;
 
         Ok(request.send_err(0))
-
-
-        
     }
 }
-
-
 
 fn bit_intersect(token: u32, other: u32) -> bool {
     (token & other) != 0

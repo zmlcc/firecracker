@@ -54,6 +54,6 @@ pub enum VtfsError {
     // GetFileMetadata,
     /// The requested operation would cause a seek beyond disk end.
     InvalidOffset,
-    // Not Found Inode
-    // NotFoundInodeError,
+    /// The fuse opcode could not be recognized
+    UnknownFuseOpcode,
 }

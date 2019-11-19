@@ -192,9 +192,6 @@ pub const FUSE_COMPAT_STATFS_SIZE: u32 = 48;
 pub const FUSE_COMPAT_INIT_OUT_SIZE: u32 = 8;
 pub const FUSE_COMPAT_22_INIT_OUT_SIZE: u32 = 24;
 pub const CUSE_INIT_INFO_MAX: u32 = 4096;
-pub const FUSE_SETUPMAPPING_ENTRIES: u32 = 8;
-pub const FUSE_SETUPMAPPING_FLAG_WRITE: u32 = 1;
-pub const FUSE_SETUPMAPPING_FLAG_READ: u32 = 2;
 pub type __u_char = ::std::os::raw::c_uchar;
 pub type __u_short = ::std::os::raw::c_ushort;
 pub type __u_int = ::std::os::raw::c_uint;
@@ -731,6 +728,8 @@ pub const fuse_opcode_FUSE_COPY_FILE_RANGE: fuse_opcode = 47;
 pub const fuse_opcode_FUSE_SETUPMAPPING: fuse_opcode = 48;
 pub const fuse_opcode_FUSE_REMOVEMAPPING: fuse_opcode = 49;
 pub const fuse_opcode_CUSE_INIT: fuse_opcode = 4096;
+pub const fuse_opcode_CUSE_INIT_BSWAP_RESERVED: fuse_opcode = 1048576;
+pub const fuse_opcode_FUSE_INIT_BSWAP_RESERVED: fuse_opcode = 436207616;
 pub type fuse_opcode = u32;
 pub const fuse_notify_code_FUSE_NOTIFY_POLL: fuse_notify_code = 1;
 pub const fuse_notify_code_FUSE_NOTIFY_INVAL_INODE: fuse_notify_code = 2;
@@ -2356,9 +2355,8 @@ pub struct fuse_init_out {
     pub max_write: u32,
     pub time_gran: u32,
     pub max_pages: u16,
-    pub padding: u16,
-    pub map_alignment: u32,
-    pub unused: [u32; 7usize],
+    pub map_alignment: u16,
+    pub unused: [u32; 8usize],
 }
 #[test]
 fn bindgen_test_layout_fuse_init_out() {
@@ -2465,18 +2463,8 @@ fn bindgen_test_layout_fuse_init_out() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<fuse_init_out>())).padding as *const _ as usize },
-        30usize,
-        concat!(
-            "Offset of field: ",
-            stringify!(fuse_init_out),
-            "::",
-            stringify!(padding)
-        )
-    );
-    assert_eq!(
         unsafe { &(*(::std::ptr::null::<fuse_init_out>())).map_alignment as *const _ as usize },
-        32usize,
+        30usize,
         concat!(
             "Offset of field: ",
             stringify!(fuse_init_out),
@@ -2486,7 +2474,7 @@ fn bindgen_test_layout_fuse_init_out() {
     );
     assert_eq!(
         unsafe { &(*(::std::ptr::null::<fuse_init_out>())).unused as *const _ as usize },
-        36usize,
+        32usize,
         concat!(
             "Offset of field: ",
             stringify!(fuse_init_out),
@@ -3926,184 +3914,6 @@ fn bindgen_test_layout_fuse_copy_file_range_in() {
             stringify!(fuse_copy_file_range_in),
             "::",
             stringify!(flags)
-        )
-    );
-}
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct fuse_setupmapping_in {
-    pub fh: u64,
-    pub foffset: u64,
-    pub len: u64,
-    pub flags: u64,
-    pub moffset: u64,
-}
-#[test]
-fn bindgen_test_layout_fuse_setupmapping_in() {
-    assert_eq!(
-        ::std::mem::size_of::<fuse_setupmapping_in>(),
-        40usize,
-        concat!("Size of: ", stringify!(fuse_setupmapping_in))
-    );
-    assert_eq!(
-        ::std::mem::align_of::<fuse_setupmapping_in>(),
-        8usize,
-        concat!("Alignment of ", stringify!(fuse_setupmapping_in))
-    );
-    assert_eq!(
-        unsafe { &(*(::std::ptr::null::<fuse_setupmapping_in>())).fh as *const _ as usize },
-        0usize,
-        concat!(
-            "Offset of field: ",
-            stringify!(fuse_setupmapping_in),
-            "::",
-            stringify!(fh)
-        )
-    );
-    assert_eq!(
-        unsafe { &(*(::std::ptr::null::<fuse_setupmapping_in>())).foffset as *const _ as usize },
-        8usize,
-        concat!(
-            "Offset of field: ",
-            stringify!(fuse_setupmapping_in),
-            "::",
-            stringify!(foffset)
-        )
-    );
-    assert_eq!(
-        unsafe { &(*(::std::ptr::null::<fuse_setupmapping_in>())).len as *const _ as usize },
-        16usize,
-        concat!(
-            "Offset of field: ",
-            stringify!(fuse_setupmapping_in),
-            "::",
-            stringify!(len)
-        )
-    );
-    assert_eq!(
-        unsafe { &(*(::std::ptr::null::<fuse_setupmapping_in>())).flags as *const _ as usize },
-        24usize,
-        concat!(
-            "Offset of field: ",
-            stringify!(fuse_setupmapping_in),
-            "::",
-            stringify!(flags)
-        )
-    );
-    assert_eq!(
-        unsafe { &(*(::std::ptr::null::<fuse_setupmapping_in>())).moffset as *const _ as usize },
-        32usize,
-        concat!(
-            "Offset of field: ",
-            stringify!(fuse_setupmapping_in),
-            "::",
-            stringify!(moffset)
-        )
-    );
-}
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct fuse_setupmapping_out {
-    pub coffset: [u64; 8usize],
-    pub len: [u64; 8usize],
-}
-#[test]
-fn bindgen_test_layout_fuse_setupmapping_out() {
-    assert_eq!(
-        ::std::mem::size_of::<fuse_setupmapping_out>(),
-        128usize,
-        concat!("Size of: ", stringify!(fuse_setupmapping_out))
-    );
-    assert_eq!(
-        ::std::mem::align_of::<fuse_setupmapping_out>(),
-        8usize,
-        concat!("Alignment of ", stringify!(fuse_setupmapping_out))
-    );
-    assert_eq!(
-        unsafe { &(*(::std::ptr::null::<fuse_setupmapping_out>())).coffset as *const _ as usize },
-        0usize,
-        concat!(
-            "Offset of field: ",
-            stringify!(fuse_setupmapping_out),
-            "::",
-            stringify!(coffset)
-        )
-    );
-    assert_eq!(
-        unsafe { &(*(::std::ptr::null::<fuse_setupmapping_out>())).len as *const _ as usize },
-        64usize,
-        concat!(
-            "Offset of field: ",
-            stringify!(fuse_setupmapping_out),
-            "::",
-            stringify!(len)
-        )
-    );
-}
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct fuse_removemapping_in {
-    pub count: u32,
-}
-#[test]
-fn bindgen_test_layout_fuse_removemapping_in() {
-    assert_eq!(
-        ::std::mem::size_of::<fuse_removemapping_in>(),
-        4usize,
-        concat!("Size of: ", stringify!(fuse_removemapping_in))
-    );
-    assert_eq!(
-        ::std::mem::align_of::<fuse_removemapping_in>(),
-        4usize,
-        concat!("Alignment of ", stringify!(fuse_removemapping_in))
-    );
-    assert_eq!(
-        unsafe { &(*(::std::ptr::null::<fuse_removemapping_in>())).count as *const _ as usize },
-        0usize,
-        concat!(
-            "Offset of field: ",
-            stringify!(fuse_removemapping_in),
-            "::",
-            stringify!(count)
-        )
-    );
-}
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct fuse_removemapping_one {
-    pub moffset: u64,
-    pub len: u64,
-}
-#[test]
-fn bindgen_test_layout_fuse_removemapping_one() {
-    assert_eq!(
-        ::std::mem::size_of::<fuse_removemapping_one>(),
-        16usize,
-        concat!("Size of: ", stringify!(fuse_removemapping_one))
-    );
-    assert_eq!(
-        ::std::mem::align_of::<fuse_removemapping_one>(),
-        8usize,
-        concat!("Alignment of ", stringify!(fuse_removemapping_one))
-    );
-    assert_eq!(
-        unsafe { &(*(::std::ptr::null::<fuse_removemapping_one>())).moffset as *const _ as usize },
-        0usize,
-        concat!(
-            "Offset of field: ",
-            stringify!(fuse_removemapping_one),
-            "::",
-            stringify!(moffset)
-        )
-    );
-    assert_eq!(
-        unsafe { &(*(::std::ptr::null::<fuse_removemapping_one>())).len as *const _ as usize },
-        8usize,
-        concat!(
-            "Offset of field: ",
-            stringify!(fuse_removemapping_one),
-            "::",
-            stringify!(len)
         )
     );
 }

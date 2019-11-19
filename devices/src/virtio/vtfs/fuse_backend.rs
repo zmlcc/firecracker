@@ -28,7 +28,7 @@ use memory_model::{Address, GuestAddress, GuestMemory};
 
 use super::super::DescriptorChain;
 
-use super::error::ExecuteError;
+use super::error::{ExecuteError,VtfsError};
 
 /// The max size of write requests from the kernel. The absolute minimum is 4k,
 /// FUSE recommends at least 128k, max 16M. The FUSE default is 128k.
@@ -42,27 +42,6 @@ const FUSE_DEFAULT_CONGESTION_THRESHOLD: u16 = (FUSE_DEFAULT_MAX_BACKGROUND * 3 
 
 type Result<T> = result::Result<T, ExecuteError>;
 
-#[derive(Debug)]
-pub enum VtfsError {
-    /// Guest gave us bad memory addresses.
-    // GuestMemory(GuestMemoryError),
-    /// Guest gave us offsets that would have overflowed a usize.
-    // CheckedOffset(GuestAddress, usize),
-    /// Guest gave us a write only descriptor that protocol says to read from.
-    UnexpectedWriteOnlyDescriptor,
-    /// Guest gave us a read only descriptor that protocol says to write to.
-    // UnexpectedReadOnlyDescriptor,
-    /// Guest gave us too few descriptors in a descriptor chain.
-    DescriptorChainTooShort,
-    /// Guest gave us a descriptor that was too short to use.
-    // DescriptorLengthTooSmall,
-    /// Getting a block's metadata fails for any reason.
-    // GetFileMetadata,
-    /// The requested operation would cause a seek beyond disk end.
-    InvalidOffset,
-    // Not Found Inode
-    // NotFoundInodeError,
-}
 
 struct DataBuf {
     addr: GuestAddress,
@@ -106,7 +85,7 @@ impl<'a> Request<'a> {
     }
 
     #[allow(non_upper_case_globals)]
-    pub fn execute(&self, fs: &mut FuseBackend) -> Result<u32> {
+    pub fn execute(&self, fs: &mut FuseBackend) -> u32 {
         error!("FUCK execute-> OPCODE {}", self.in_header.opcode);
         let ret = match self.in_header.opcode {
             fuse_opcode_FUSE_INIT => fs.do_init(self),
@@ -137,7 +116,32 @@ impl<'a> Request<'a> {
             },
         };
         error!("FUCK EXEC {:?}", ret);
-        ret
+        ret.unwrap_or_else(|e| match e {
+            ExecuteError::InvalidMethod => {
+                // TODO: Metrics
+                self.send_err(libc::ENOSYS)
+            }
+            ExecuteError::IllegalParameter => {
+                // TODO: Metrics
+                self.send_err(libc::EINVAL)
+            }
+            ExecuteError::MemoryError => {
+                // TODO: Metrics
+                self.send_err(libc::EINVAL)
+            }
+            ExecuteError::UnknownHandle => {
+                // TODO: Metrics
+                self.send_err(libc::ENOENT)
+            }
+            ExecuteError::OSError(eno) => {
+                // TODO: Metrics
+                self.send_err(eno)
+            }
+            ExecuteError::UnknownError => {
+                // TODO: Metrics
+                self.send_err(libc::ENOSYS)
+            }
+        })
     }
 
     #[allow(non_upper_case_globals)]
@@ -346,22 +350,6 @@ impl<'a> Request<'a> {
         write_size as u32
     }
 
-    // fn send_header(&self, body_len: u32) -> u32 {
-    //     let our_header = fuse_out_header {
-    //         len: (mem::size_of::<fuse_out_header>() ) as u32 + body_len,
-    //         error: 0,
-    //         unique: self.in_header.unique,
-    //     };
-
-    //     // We use unwrap because the request parsing process already checked that the
-    //     // addr was valid.
-    //     self.memory
-    //         .write_obj_at_addr(our_header, self.out_header_addr)
-    //         .unwrap();
-
-    //     our_header.len
-    // }
-
     fn send_dirent_vec(&self, arg: Vec<FuseDirent>) -> u32 {
         let mut arg_len = 0;
         for entry in arg.iter() {
@@ -388,7 +376,7 @@ impl<'a> Request<'a> {
         our_header.len
     }
 
-    pub fn send_err(&self, err: i32) -> u32 {
+    fn send_err(&self, err: i32) -> u32 {
         let our_header = fuse_out_header {
             len: (mem::size_of::<fuse_out_header>()) as u32,
             error: -err,

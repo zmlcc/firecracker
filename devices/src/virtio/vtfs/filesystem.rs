@@ -67,8 +67,6 @@ impl Fd {
         }
     }
 
-
-
     pub fn reopen(&self, flag: c_int) -> Result<Fd> {
         let name = format!("/proc/self/fd/{}\0", self.0);
         // It should be safe because `\0` is at the end of name.
@@ -191,12 +189,7 @@ impl Fd {
         libc_err!(unsafe { libc::linkat(self.0, old_name_c, new_fd.0, new_name_c, flag) })
     }
 
-    pub fn renameat(
-        &self,
-        old_name: &CStr,
-        new_fd: &Fd,
-        new_name: &CStr,
-    ) -> Result<()> {
+    pub fn renameat(&self, old_name: &CStr, new_fd: &Fd, new_name: &CStr) -> Result<()> {
         let old_name_c = old_name.as_ptr();
         let new_name_c = new_name.as_ptr();
         libc_err!(unsafe { libc::renameat(self.0, old_name_c, new_fd.0, new_name_c) })
@@ -230,18 +223,22 @@ impl Read for Fd {
 impl Write for Fd {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let ret = libc_ret!(unsafe {
-            libc::write(self.0,
-                        buf.as_ptr() as *const c_void,
-                        cmp::min(buf.len(), <libc::ssize_t>::max_value() as usize))
+            libc::write(
+                self.0,
+                buf.as_ptr() as *const c_void,
+                cmp::min(buf.len(), <libc::ssize_t>::max_value() as usize),
+            )
         })?;
         Ok(ret as usize)
     }
 
     fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
         let ret = libc_ret!(unsafe {
-            libc::writev(self.0,
-                         bufs.as_ptr() as *const libc::iovec,
-                         cmp::min(bufs.len(), c_int::max_value() as usize) as c_int)
+            libc::writev(
+                self.0,
+                bufs.as_ptr() as *const libc::iovec,
+                cmp::min(bufs.len(), c_int::max_value() as usize) as c_int,
+            )
         })?;
         Ok(ret as usize)
     }
@@ -252,7 +249,7 @@ impl Write for Fd {
 }
 
 impl FdNum for Fd {
-        fn fd_num(&self) -> u64 {
+    fn fd_num(&self) -> u64 {
         self.0 as u64
     }
 }
@@ -301,7 +298,7 @@ impl Dir {
             unsafe { libc::close(fd) };
             return Err(e);
         };
-        Ok(Dir{dir: d, fd: fd})
+        Ok(Dir { dir: d, fd: fd })
     }
 
     pub fn iter(&mut self) -> Iter {
@@ -310,7 +307,7 @@ impl Dir {
 }
 
 impl FdNum for Dir {
-     fn fd_num(&self) -> u64 {
+    fn fd_num(&self) -> u64 {
         self.fd as u64
     }
 }
@@ -378,8 +375,6 @@ impl Debug for Entry {
             .finish()
     }
 }
-
-
 
 // pub fn mknodat(dirfd: RawFd, name: &CStr, mode: mode_t, dev: dev_t) -> Result<()> {
 //     libc_err!(unsafe { libc::mknodat(dirfd, name.as_ptr(), mode, dev) })

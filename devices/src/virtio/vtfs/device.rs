@@ -22,7 +22,6 @@ use super::super::{
 };
 use super::fuse_backend::{FuseBackend, Request};
 
-use super::error::ExecuteError;
 
 const CONFIG_TAG_SIZE: usize = 36;
 const CONFIG_NUM_QUEUES_SIZE: usize = 4;
@@ -93,32 +92,7 @@ impl VtfsEpollHandler {
             let len: u32;
             match Request::parse(&head, &self.mem) {
                 Ok(request) => {
-                    len = request.execute(&mut self.fs).unwrap_or_else(|e| match e {
-                        ExecuteError::InvalidMethod => {
-                            // TODO: Metrics
-                            request.send_err(libc::ENOSYS)
-                        }
-                        ExecuteError::IllegalParameter => {
-                            // TODO: Metrics
-                            request.send_err(libc::EINVAL)
-                        }
-                        ExecuteError::MemoryError => {
-                            // TODO: Metrics
-                            request.send_err(libc::EINVAL)
-                        }
-                        ExecuteError::UnknownHandle => {
-                            // TODO: Metrics
-                            request.send_err(libc::ENOENT)
-                        }
-                        ExecuteError::OSError(eno) => {
-                            // TODO: Metrics
-                            request.send_err(eno)
-                        }
-                        ExecuteError::UnknownError => {
-                            // TODO: Metrics
-                            request.send_err(libc::ENOSYS)
-                        }
-                    });
+                    len = request.execute(&mut self.fs);
                 }
                 Err(_e) => {
                     error!("FUCK PARSE {:?}", _e);

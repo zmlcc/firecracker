@@ -5,7 +5,7 @@ use std::mem;
 
 use super::filesystem::Entry;
 
-use memory_model::{GuestAddress, GuestMemory};
+use memory_model::{Address, GuestAddress, GuestMemory};
 
 #[derive(Debug)]
 pub struct FuseDirent {

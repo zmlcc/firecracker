@@ -24,7 +24,7 @@ use fuse_gen::fuse::*;
 
 use libc::{dev_t, gid_t, mode_t, uid_t};
 
-use memory_model::{GuestAddress, GuestMemory};
+use memory_model::{Address, GuestAddress, GuestMemory};
 
 use super::super::DescriptorChain;
 

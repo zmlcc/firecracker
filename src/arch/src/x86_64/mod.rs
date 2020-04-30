@@ -53,6 +53,9 @@ const MEM_32BIT_GAP_SIZE: u64 = 768 << 20;
 /// The start of the memory area reserved for MMIO devices.
 pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;
 
+#[cfg(feature = "hugetlb")]
+const HUGE_PAGE_SIZE: u64 = 1 << 30;
+
 /// Returns a Vec of the valid memory addresses.
 /// These should be used to configure the GuestMemoryMmap structure for the platform.
 /// For x86_64 all addresses are valid from the start of the kernel except a
@@ -69,6 +72,27 @@ pub fn arch_memory_regions(size: usize) -> Vec<(GuestAddress, usize)> {
             (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
         ],
     }
+}
+
+#[cfg(feature = "hugetlb")]
+/// Returns a Vec of the valid memory addresses.
+/// For using hugetlb
+pub fn arch_huge_memory_regions(size: usize) -> Vec<(GuestAddress, usize)> {
+    let page_count = (size as u64 + HUGE_PAGE_SIZE - 1) / HUGE_PAGE_SIZE;
+    let mut v: Vec<(GuestAddress, usize)> = Vec::new();
+    let mut i: u64 = 0;
+    while i < page_count {
+        if i != 3 {
+            v.push((GuestAddress(HUGE_PAGE_SIZE * i), HUGE_PAGE_SIZE as usize));
+        } else {
+            v.push((
+                GuestAddress(HUGE_PAGE_SIZE * i),
+                (HUGE_PAGE_SIZE - MEM_32BIT_GAP_SIZE) as usize,
+            ));
+        }
+        i += 1;
+    }
+    v
 }
 
 /// Returns the memory address where the kernel could be loaded.

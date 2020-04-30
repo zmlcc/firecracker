@@ -190,6 +190,11 @@ impl VmResources {
             self.vm_config.cpu_template = machine_config.cpu_template;
         }
 
+        #[cfg(feature = "hugetlb")]
+        if machine_config.hugetlb_enabled.is_some() {
+            self.vm_config.hugetlb_enabled = machine_config.hugetlb_enabled;
+        }
+
         Ok(())
     }
 

@@ -69,6 +69,8 @@ mod tests {
             mem_size_mib: Some(1024),
             ht_enabled: Some(true),
             cpu_template: Some(CpuFeaturesTemplate::T2),
+            #[cfg(feature = "hugetlb")]
+            hugetlb_enabled: Some(false),
         };
         let body = r#"{
                 "vcpu_count": 8,

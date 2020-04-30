@@ -363,12 +363,27 @@ pub fn build_microvm(
     Ok(vmm)
 }
 
+#[cfg(not(feature = "hugetlb"))]
 /// Creates GuestMemory of `mem_size_mib` MiB in size.
 pub fn create_guest_memory(
     mem_size_mib: usize,
 ) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
     let mem_size = mem_size_mib << 20;
     let arch_mem_regions = arch::arch_memory_regions(mem_size);
+
+    Ok(GuestMemoryMmap::from_ranges(&arch_mem_regions)
+        .map_err(StartMicrovmError::GuestMemoryMmap)?)
+}
+
+#[cfg(feature = "hugetlb")]
+/// Creates GuestMemory of `mem_size_mib` MiB in size.
+pub fn create_guest_memory(
+    mem_size_mib: usize,
+) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
+    let mem_size = mem_size_mib << 20;
+    let arch_mem_regions = arch::arch_huge_memory_regions(mem_size);
+
+    GuestMemoryMmap::from_ranges_with_files(ranges: T)
 
     Ok(GuestMemoryMmap::from_ranges(&arch_mem_regions)
         .map_err(StartMicrovmError::GuestMemoryMmap)?)

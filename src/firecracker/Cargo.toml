@@ -18,4 +18,4 @@ vmm = { path = "../vmm" }
 
 [features]
 default = ["hugetlb"]
-hugetlb = ["vmm/hugetlb"]
+hugetlb = ["api_server/hugetlb"]

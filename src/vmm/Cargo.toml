@@ -32,4 +32,4 @@ vmm-sys-util = ">=0.4.0"
 
 
 [features]
-hugetlb = []
+hugetlb = ["arch/hugetlb"]

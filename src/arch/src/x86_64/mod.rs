@@ -54,7 +54,12 @@ const MEM_32BIT_GAP_SIZE: u64 = 768 << 20;
 pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;
 
 #[cfg(feature = "hugetlb")]
-const HUGE_PAGE_SIZE: u64 = 1 << 30;
+/// Huge page size: 1G
+pub const HUGE_PAGE_SIZE: usize = 1 << 30;
+
+#[cfg(feature = "hugetlb")]
+/// last aligned address before memory gap
+const LAST_ADDR_BEFORE_GAP: usize = 3 * HUGE_PAGE_SIZE;
 
 /// Returns a Vec of the valid memory addresses.
 /// These should be used to configure the GuestMemoryMmap structure for the platform.
@@ -76,23 +81,17 @@ pub fn arch_memory_regions(size: usize) -> Vec<(GuestAddress, usize)> {
 
 #[cfg(feature = "hugetlb")]
 /// Returns a Vec of the valid memory addresses.
-/// For using hugetlb
+/// Memory size should be aligned with huge page size
 pub fn arch_huge_memory_regions(size: usize) -> Vec<(GuestAddress, usize)> {
-    let page_count = (size as u64 + HUGE_PAGE_SIZE - 1) / HUGE_PAGE_SIZE;
-    let mut v: Vec<(GuestAddress, usize)> = Vec::new();
-    let mut i: u64 = 0;
-    while i < page_count {
-        if i != 3 {
-            v.push((GuestAddress(HUGE_PAGE_SIZE * i), HUGE_PAGE_SIZE as usize));
-        } else {
-            v.push((
-                GuestAddress(HUGE_PAGE_SIZE * i),
-                (HUGE_PAGE_SIZE - MEM_32BIT_GAP_SIZE) as usize,
-            ));
-        }
-        i += 1;
+    match size.checked_sub(LAST_ADDR_BEFORE_GAP) {
+        // case1: guest memory fits before the gap
+        None | Some(0) => vec![(GuestAddress(0), LAST_ADDR_BEFORE_GAP)],
+        // case2: guest memory extends beyond the gap
+        Some(remaining) => vec![
+            (GuestAddress(0), LAST_ADDR_BEFORE_GAP),
+            (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
+        ],
     }
-    v
 }
 
 /// Returns the memory address where the kernel could be loaded.

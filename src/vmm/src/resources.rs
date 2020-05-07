@@ -18,6 +18,8 @@ use vmm_config::mmds::{MmdsConfig, MmdsConfigError};
 use vmm_config::net::*;
 use vmm_config::vsock::*;
 use vstate::VcpuConfig;
+#[cfg(feature = "hugetlb")]
+use vstate::VMemoryConfig;
 
 type Result<E> = std::result::Result<(), E>;
 
@@ -146,6 +148,18 @@ impl VmResources {
             vcpu_count: self.vm_config().vcpu_count.unwrap(),
             ht_enabled: self.vm_config().ht_enabled.unwrap(),
             cpu_template: self.vm_config().cpu_template,
+        }
+    }
+
+    #[cfg(feature = "hugetlb")]
+    /// Returns a VcpuConfig based on the vm config.
+    pub fn vmemory_config(&self) -> VMemoryConfig {
+        // The unwraps are ok to use because the values are initialized using defaults if not
+        // supplied by the user.
+        VMemoryConfig {
+            mem_size_mib: self.vm_config().mem_size_mib.unwrap(),
+            hugetlb_enabled: self.vm_config().hugetlb_enabled.unwrap(),
+            hugetlb_path: self.vm_config().hugetlb_path.clone(),
         }
     }
 

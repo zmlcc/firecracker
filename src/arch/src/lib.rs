@@ -37,7 +37,7 @@ pub use x86_64::{
 
 #[cfg(target_arch = "x86_64")]
 #[cfg(feature = "hugetlb")]
-pub use x86_64::arch_huge_memory_regions;
+pub use x86_64::{HUGE_PAGE_SIZE, arch_huge_memory_regions};
 
 /// Type for returning public functions outcome.
 pub type Result<T> = result::Result<T, Error>;

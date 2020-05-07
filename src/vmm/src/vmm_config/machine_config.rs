@@ -57,6 +57,10 @@ pub struct VmConfig {
     /// Enable using hugeltb memory
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hugetlb_enabled: Option<bool>,
+    #[cfg(feature = "hugetlb")]
+    /// Hugetlb path
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hugetlb_path: Option<String>,
 }
 
 impl Default for VmConfig {
@@ -68,6 +72,8 @@ impl Default for VmConfig {
             cpu_template: None,
             #[cfg(feature = "hugetlb")]
             hugetlb_enabled: Some(false),
+            #[cfg(feature = "hugetlb")]
+            hugetlb_path: None,
         }
     }
 }

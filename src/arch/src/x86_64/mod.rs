@@ -54,8 +54,8 @@ const MEM_32BIT_GAP_SIZE: u64 = 768 << 20;
 pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;
 
 #[cfg(feature = "hugetlb")]
-/// Huge page size: 1G
-pub const HUGE_PAGE_SIZE: usize = 1 << 30;
+/// Huge page size: 2M
+pub const HUGE_PAGE_SIZE: usize = 2 << 20;
 
 #[cfg(feature = "hugetlb")]
 /// last aligned address before memory gap

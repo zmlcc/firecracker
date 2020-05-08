@@ -19,6 +19,8 @@ use request::net::{parse_patch_net, parse_put_net};
 use request::vsock::parse_put_vsock;
 use ApiServer;
 
+use request::vu_block::parse_put_vublock;
+
 use vmm::rpc_interface::{VmmAction, VmmActionError};
 
 #[allow(clippy::large_enum_variant)]
@@ -61,6 +63,7 @@ impl ParsedRequest {
                 parse_put_net(body, path_tokens.get(1))
             }
             (Method::Put, "vsock", Some(body)) => parse_put_vsock(body),
+            (Method::Put, "vhost-user-blocks", Some(body)) => parse_put_vublock(body, path_tokens.get(1)),
             (Method::Put, _, None) => method_to_error(Method::Put),
             (Method::Patch, "drives", Some(body)) => parse_patch_drive(body, path_tokens.get(1)),
             (Method::Patch, "machine-config", Some(body)) => parse_patch_machine_config(body),

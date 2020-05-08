@@ -31,6 +31,8 @@ use vmm_config::net::{
 };
 use vmm_config::vsock::{VsockConfigError, VsockDeviceConfig};
 
+use vmm_config::vu_block::{VuBlockConfig, VuBlockError};
+
 /// This enum represents the public interface of the VMM. Each action contains various
 /// bits of information (ids, paths, etc.).
 #[derive(PartialEq)]
@@ -62,6 +64,9 @@ pub enum VmmAction {
     /// Set the microVM configuration (memory & vcpu) using `VmConfig` as input. This
     /// action can only be called before the microVM has booted.
     SetVmConfiguration(VmConfig),
+    /// Add a new vhost user block device using `VuBlockConfig` as input.
+    /// This action can only be called before the microVM has booted.
+    InsertVuBlockDevice(VuBlockConfig),
     /// Launch the microVM. This action can only be called before the microVM has booted.
     StartMicroVm,
     /// Send CTRL+ALT+DEL to the microVM, using the i8042 keyboard function. If an AT-keyboard
@@ -106,6 +111,8 @@ pub enum VmmActionError {
     VsockConfig(VsockConfigError),
     /// The action `SetMmdsConfiguration` failed because of bad user input.
     MmdsConfig(MmdsConfigError),
+    /// The action `InsertNetworkDevice` failed because of bad user input.
+    VuBlockConfig(VuBlockError),
 }
 
 impl Display for VmmActionError {
@@ -135,6 +142,7 @@ impl Display for VmmActionError {
                 // The action `SetVsockDevice` failed because of bad user input.
                 VsockConfig(err) => err.to_string(),
                 MmdsConfig(err) => err.to_string(),
+                VuBlockConfig(err) => err.to_string(),
             }
         )
     }
@@ -263,6 +271,11 @@ impl<'a> PrebootApiController<'a> {
                 .set_mmds_config(mmds_config)
                 .map(|_| VmmData::Empty)
                 .map_err(VmmActionError::MmdsConfig),
+            InsertVuBlockDevice(vu_block_device_config) => self
+                .vm_resources
+                .set_vu_block_device(vu_block_device_config)
+                .map(|_| VmmData::Empty)
+                .map_err(VmmActionError::VuBlockConfig),
             StartMicroVm => super::builder::build_microvm(
                 &self.vm_resources,
                 &mut self.event_manager,
@@ -321,6 +334,7 @@ impl RuntimeApiController {
             | InsertNetworkDevice(_)
             | SetVsockDevice(_)
             | SetMmdsConfiguration(_)
+            | InsertVuBlockDevice(_)
             | SetVmConfiguration(_) => Err(VmmActionError::OperationNotSupportedPostBoot),
             StartMicroVm => Err(VmmActionError::StartMicrovm(
                 StartMicrovmError::MicroVMAlreadyRunning,

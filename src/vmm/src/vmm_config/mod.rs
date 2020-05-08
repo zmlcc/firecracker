@@ -30,6 +30,9 @@ pub mod net;
 /// Wrapper for configuring the vsock devices attached to the microVM.
 pub mod vsock;
 
+/// Wrapper for configuring the vhost user block devices attached to the microVM.
+pub mod vu_block;
+
 // TODO: Migrate the VMM public-facing code (i.e. interface) to use stateless structures,
 // for receiving data/args, such as the below `RateLimiterConfig` and `TokenBucketConfig`.
 // Also todo: find a better suffix than `Config`; it should illustrate the static nature

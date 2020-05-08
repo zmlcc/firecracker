@@ -32,6 +32,8 @@ use vmm_config::net::NetBuilder;
 use vstate::{KvmContext, Vcpu, VcpuConfig, Vm};
 use {device_manager, VmmEventsObserver};
 
+use vmm_config::vu_block::VuBlockBuilder;
+
 /// Errors associated with starting the instance.
 #[derive(Debug)]
 pub enum StartMicrovmError {
@@ -387,6 +389,8 @@ pub fn build_microvm(
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager)?;
     }
     attach_net_devices(&mut vmm, &vm_resources.net_builder, event_manager)?;
+
+    attach_vu_block_devices(&mut vmm, &vm_resources.vu_block, event_manager)?;
 
     // Write the kernel command line to guest memory. This is x86_64 specific, since on
     // aarch64 the command line will be specified through the FDT.
@@ -796,6 +800,35 @@ fn attach_net_devices(
             vmm,
             id,
             MmioTransport::new(vmm.guest_memory().clone(), net_device.clone()),
+        )
+        .map_err(RegisterNetDevice)?;
+    }
+
+    Ok(())
+}
+
+fn attach_vu_block_devices(
+    vmm: &mut Vmm,
+    vu_block_builder: &VuBlockBuilder,
+    event_manager: &mut EventManager,
+) -> std::result::Result<(), StartMicrovmError> {
+
+    print!("FUCK attach_vu_block_devices {}", vu_block_builder.list.len());
+
+
+    use self::StartMicrovmError::*;
+
+    for vu_block_device in vu_block_builder.iter() {
+        // event_manager
+        //     .add_subscriber(vu_block_device.clone())
+        //     .map_err(RegisterEvent)?;
+
+        let id = vu_block_device.lock().unwrap().id().clone();
+        // The device mutex mustn't be locked here otherwise it will deadlock.
+        attach_mmio_device(
+            vmm,
+            id,
+            MmioTransport::new(vmm.guest_memory().clone(), vu_block_device.clone()),
         )
         .map_err(RegisterNetDevice)?;
     }

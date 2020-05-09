@@ -82,7 +82,9 @@ impl VuBlockBuilder {
 
     /// Creates a Block device from a VuBlockConfig.
     pub fn create_block(config: VuBlockConfig) -> Result<VhostUserBlock> {
-        print!("FUCK create_block {:?}", config);
-        devices::virtio::VhostUserBlock::new(config.drive_id).map_err(VuBlockError::CreateBlockDevice)
+        println!("FUCK create_block {:?}", config);
+        let ret = devices::virtio::VhostUserBlock::new(config.drive_id, &config.socket_path);
+        // std::panic!("FUCK create_block {:?}\n", ret);
+        ret.map_err(VuBlockError::CreateBlockDevice)
     }
 }

@@ -813,7 +813,7 @@ fn attach_vu_block_devices(
     event_manager: &mut EventManager,
 ) -> std::result::Result<(), StartMicrovmError> {
 
-    print!("FUCK attach_vu_block_devices {}", vu_block_builder.list.len());
+    println!("FUCK attach_vu_block_devices {}", vu_block_builder.list.len());
 
 
     use self::StartMicrovmError::*;

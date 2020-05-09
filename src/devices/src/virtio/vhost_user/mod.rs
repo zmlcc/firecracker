@@ -1,6 +1,8 @@
-use std::{io, result};
-
 pub mod block;
+
+use std::{io, result};
+use vhost_rs::Error as VhostError;
+
 
 pub use self::block::VhostUserBlock;
 
@@ -13,6 +15,10 @@ pub const QUEUE_SIZES: &[u16] = &[QUEUE_SIZE];
 pub enum Error {
     /// EventFd
     EventFd(io::Error),
+    /// Failed to create master.
+    VhostUserBackend(VhostError),
 }
+
+
 
 pub type Result<T> = result::Result<T, Error>;

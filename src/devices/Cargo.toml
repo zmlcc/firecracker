@@ -17,3 +17,5 @@ snapshot = { path = "../snapshot" }
 versionize = { path = "../versionize" }
 versionize_derive = { path = "../versionize_derive" }
 virtio_gen = { path = "../virtio_gen" }
+
+vhost_rs = { git = "https://github.com/cloud-hypervisor/vhost", branch = "dragonball", package = "vhost", features = ["vhost-user-master"] }

@@ -1,4 +1,4 @@
-use super::super::{ActivateResult,ActivateError, DeviceState, Queue, VirtioDevice, TYPE_BLOCK};
+use super::super::{ActivateError, ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_BLOCK};
 use super::{Error, Result, CONFIG_SPACE_SIZE, NUM_QUEUES, QUEUE_SIZES};
 use utils::eventfd::EventFd;
 
@@ -8,7 +8,11 @@ use std::cmp;
 use std::io::Write;
 use std::sync::Arc;
 
-use vm_memory::GuestMemoryMmap;
+use vm_memory::Error as MmapError;
+use vm_memory::GuestMemory;
+use vm_memory::{Address, GuestMemoryMmap, GuestMemoryRegion};
+
+use std::os::unix::io::AsRawFd;
 
 use vhost_rs::vhost_user::{Master, VhostUserMaster};
 
@@ -200,43 +204,104 @@ impl VirtioDevice for VhostUserBlock {
     fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
         println!("FUCK activate acked_features {:#x}", self.acked_features);
 
-        self.vhost_user_master
+        let queues = &self.queues;
+        let master = &mut self.vhost_user_master;
+
+        master
             .set_features(self.acked_features)
             .or(Err(ActivateError::BadActivate))?;
 
-        // self.vhost_user_master
+            println!("FUCK activate 2");
+        
+
+        update_mem_table(master, &mem)?;
+
+        println!("FUCK activate 222");
+
+
+        // master.set_vring_num(0, num: u16)
+
+        for (queue_index, queue) in queues.into_iter().enumerate() {
+            master
+                .set_vring_num(queue_index, queue.actual_size())
+                .or(Err(ActivateError::BadActivate))?;
+
+            println!("FUCK activate 3");
+
+
+            let data = &VringConfigData{
+                queue_max_size: queue.get_max_size(),
+            queue_size: queue.actual_size(),
+            flags: 0u32,
+            desc_table_addr: queue.desc_table.raw_value(),
+            used_ring_addr: queue.used_ring.raw_value(),
+            avail_ring_addr: queue.avail_ring.raw_value(),
+            log_addr: None,
+            };
+
+            master.set_vring_addr(queue_index, data).or(Err(ActivateError::BadActivate))?;
+
+            println!("FUCK activate 4");
+
+
+            master.set_vring_base(queue_index, 0u16).or(Err(ActivateError::BadActivate))?;
+
+            println!("FUCK activate 5");
+
+
+            master.set_vring_call(queue_index, &self.interrupt_evt).or(Err(ActivateError::BadActivate))?;
+
+            println!("FUCK activate 6");
+
+
+            master.set_vring_kick(queue_index, &self.queue_evts[queue_index]).or(Err(ActivateError::BadActivate))?;
+
+            println!("FUCK activate 7");
+
+
+
+            master.set_vring_enable(queue_index, true).or(Err(ActivateError::BadActivate))?;
+
+            println!("FUCK activate 8");
+
+        }
 
         self.device_state = DeviceState::Activated(mem);
         Ok(())
     }
 }
 
+pub fn update_mem_table(vu: &mut Master, mem: &GuestMemoryMmap) -> Result<()> {
+    let mut regions: Vec<VhostUserMemoryRegionInfo> = Vec::new();
+    mem.with_regions_mut(|_, region| {
+    println!("FUCK activate {:?}", region);
+
+        let (mmap_handle, mmap_offset) = match region.file_offset() {
+            Some(_file_offset) => (_file_offset.file().as_raw_fd(), _file_offset.start()),
+            None => return Err(Error::NoMemoryRegion),
+        };
+
+        let vhost_user_net_reg = VhostUserMemoryRegionInfo {
+            guest_phys_addr: region.start_addr().raw_value(),
+            memory_size: region.len() as u64,
+            userspace_addr: region.as_ptr() as u64,
+            mmap_offset,
+            mmap_handle,
+        };
+
+        regions.push(vhost_user_net_reg);
+
+        Ok(())
+    })?;
+
+    println!("FUCK activate 211");
 
 
-// pub fn update_mem_table(vu: &mut Master, mem: &GuestMemoryMmap) -> Result<()> {
-//     let mut regions: Vec<VhostUserMemoryRegionInfo> = Vec::new();
-//     mem.with_regions_mut(|_, region| {
-//         let (mmap_handle, mmap_offset) = match region.file_offset() {
-//             Some(_file_offset) => (_file_offset.file().as_raw_fd(), _file_offset.start()),
-//             None => return Err(MmapError::NoMemoryRegion),
-//         };
+    vu.set_mem_table(regions.as_slice())
+        .map_err(Error::VhostUserBackend)?;
 
-//         let vhost_user_net_reg = VhostUserMemoryRegionInfo {
-//             guest_phys_addr: region.start_addr().raw_value(),
-//             memory_size: region.len() as u64,
-//             userspace_addr: region.as_ptr() as u64,
-//             mmap_offset,
-//             mmap_handle,
-//         };
+    println!("FUCK activate 212");
+    
 
-//         regions.push(vhost_user_net_reg);
-
-//         Ok(())
-//     })
-//     .map_err(Error::VhostUserMemoryRegion)?;
-
-//     vu.set_mem_table(regions.as_slice())
-//         .map_err(Error::VhostUserSetMemTable)?;
-
-//     Ok(())
-// }
+    Ok(())
+}

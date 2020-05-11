@@ -258,6 +258,10 @@ pub fn build_microvm(
             .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
     )?;
 
+    println!("FUCK huge {:?}", vm_resources.vm_config().hugetlb_enabled);
+    println!("FUCK mem_size_mib {:?}", vm_resources.vm_config().mem_size_mib);
+    println!("FUCK hugetlb_path {:?}", vm_resources.vm_config().hugetlb_path);
+
     #[cfg(feature = "hugetlb")]
     let guest_memory = match vm_resources.vm_config().hugetlb_enabled {
         Some(true) => create_guest_hugetlb_memory(
@@ -428,7 +432,13 @@ pub fn create_guest_hugetlb_memory(
     mem_size_mib: usize,
     hugetlb_path: &str,
 ) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
+
+    println!("FUCK hugetlb mem_size_mib {}", mem_size_mib);
+
     let mem_size = mem_size_mib << 20;
+
+    println!("FUCK hugetlb mem_size {}", mem_size);
+
 
     if mem_size % arch::HUGE_PAGE_SIZE != 0 {
         return Err(StartMicrovmError::MemorySizeNotAligned);
@@ -443,9 +453,16 @@ pub fn create_guest_hugetlb_memory(
             .open(hugetlb_path)
             .map_err(StartMicrovmError::OpenHugetlbFile)?,
     );
+
+    println!("FUCK hugetlb hugetlb_file {:?}", hugetlb_file);
+
+
     hugetlb_file
         .set_len(mem_size as u64)
         .map_err(StartMicrovmError::OpenHugetlbFile)?;
+
+    println!("FUCK hugetlb set_len");
+
 
     let arch_mem_regions = arch::arch_huge_memory_regions(mem_size);
     let arch_mem_regions_with_files: Vec<_> = arch_mem_regions
@@ -460,6 +477,10 @@ pub fn create_guest_hugetlb_memory(
             ))
         })
         .collect();
+
+
+        println!("FUCK hugetlb arch_mem_regions_with_files {:?}", arch_mem_regions_with_files);
+    
 
     Ok(
         GuestMemoryMmap::from_ranges_with_files(arch_mem_regions_with_files)

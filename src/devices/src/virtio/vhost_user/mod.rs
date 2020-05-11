@@ -3,6 +3,8 @@ pub mod block;
 use std::{io, result};
 use vhost_rs::Error as VhostError;
 
+use super::ActivateError;
+
 
 pub use self::block::VhostUserBlock;
 
@@ -17,6 +19,14 @@ pub enum Error {
     EventFd(io::Error),
     /// Failed to create master.
     VhostUserBackend(VhostError),
+    /// No memory region found.
+    NoMemoryRegion,
+}
+
+impl From<Error> for ActivateError {
+    fn from(_: Error) -> ActivateError {
+        ActivateError::BadActivate
+    }
 }
 
 

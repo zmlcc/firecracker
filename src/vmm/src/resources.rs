@@ -221,6 +221,7 @@ impl VmResources {
         #[cfg(feature = "hugetlb")]
         if machine_config.hugetlb_enabled.is_some() {
             self.vm_config.hugetlb_enabled = machine_config.hugetlb_enabled;
+            self.vm_config.hugetlb_path = machine_config.hugetlb_path.clone();
         }
 
         Ok(())

@@ -1,14 +1,16 @@
-use super::super::{ActivateError, ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_BLOCK};
+use super::super::{ActivateError, ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_BLOCK, VIRTIO_MMIO_INT_VRING};
 use super::{Error, Result, CONFIG_SPACE_SIZE, NUM_QUEUES, QUEUE_SIZES};
 use utils::eventfd::EventFd;
 
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use std::cmp;
 use std::io::Write;
 use std::sync::Arc;
 
-use vm_memory::Error as MmapError;
+use std::result;
+
+use crate::{Error as DeviceError};
 use vm_memory::GuestMemory;
 use vm_memory::{Address, GuestMemoryMmap, GuestMemoryRegion};
 
@@ -39,6 +41,7 @@ pub struct VhostUserBlock {
     // Implementation specific fields.
     pub(crate) id: String,
     vhost_user_master: Master,
+    pub(crate) call_evts: Vec<EventFd>,
 }
 
 impl std::fmt::Debug for VhostUserBlock {
@@ -112,6 +115,11 @@ impl VhostUserBlock {
             queue_evts.push(EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?);
         }
 
+        let mut call_evts = Vec::new();
+        for _ in QUEUE_SIZES.iter() {
+            call_evts.push(EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?);
+        }
+
         Ok(VhostUserBlock {
             avail_features,
             acked_features,
@@ -123,12 +131,24 @@ impl VhostUserBlock {
             device_state: DeviceState::Inactive,
             id,
             vhost_user_master: master,
+            call_evts,
         })
     }
 
     /// Provides the ID of this device.
     pub fn id(&self) -> &String {
         &self.id
+    }
+
+    pub(crate) fn signal_used_queue(&self) -> result::Result<(), DeviceError> {
+        self.interrupt_status
+            .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
+
+        self.interrupt_evt.write(1).map_err(|e| {
+            error!("Failed to signal used queue: {:?}", e);
+            DeviceError::FailedSignalingUsedQueue(e)
+        })?;
+        Ok(())
     }
 }
 
@@ -204,6 +224,8 @@ impl VirtioDevice for VhostUserBlock {
     fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
         println!("FUCK activate acked_features {:#x}", self.acked_features);
 
+        println!("FUCK FDINFO interrupt_evt {}", self.interrupt_evt.as_raw_fd());
+
         let queues = &self.queues;
         let master = &mut self.vhost_user_master;
 
@@ -211,13 +233,11 @@ impl VirtioDevice for VhostUserBlock {
             .set_features(self.acked_features)
             .or(Err(ActivateError::BadActivate))?;
 
-            println!("FUCK activate 2");
-        
+        println!("FUCK activate 2");
 
         update_mem_table(master, &mem)?;
 
         println!("FUCK activate 222");
-
 
         // master.set_vring_num(0, num: u16)
 
@@ -228,42 +248,48 @@ impl VirtioDevice for VhostUserBlock {
 
             println!("FUCK activate 3");
 
+        println!("FUCK FDINFO queue_evt {}", self.queue_evts[queue_index].as_raw_fd());
 
-            let data = &VringConfigData{
+
+            let data = &VringConfigData {
                 queue_max_size: queue.get_max_size(),
-            queue_size: queue.actual_size(),
-            flags: 0u32,
-            desc_table_addr: queue.desc_table.raw_value(),
-            used_ring_addr: queue.used_ring.raw_value(),
-            avail_ring_addr: queue.avail_ring.raw_value(),
-            log_addr: None,
+                queue_size: queue.actual_size(),
+                flags: 0u32,
+                desc_table_addr: mem.get_host_address(queue.desc_table).or(Err(ActivateError::BadActivate))? as u64,
+                used_ring_addr: mem.get_host_address(queue.used_ring).or(Err(ActivateError::BadActivate))? as u64,
+                avail_ring_addr: mem.get_host_address(queue.avail_ring).or(Err(ActivateError::BadActivate))? as u64,
+                log_addr: None,
             };
 
-            master.set_vring_addr(queue_index, data).or(Err(ActivateError::BadActivate))?;
+            master
+                .set_vring_addr(queue_index, data)
+                .or(Err(ActivateError::BadActivate))?;
 
             println!("FUCK activate 4");
 
-
-            master.set_vring_base(queue_index, 0u16).or(Err(ActivateError::BadActivate))?;
+            master
+                .set_vring_base(queue_index, 0u16)
+                .or(Err(ActivateError::BadActivate))?;
 
             println!("FUCK activate 5");
 
-
-            master.set_vring_call(queue_index, &self.interrupt_evt).or(Err(ActivateError::BadActivate))?;
+            master
+                .set_vring_call(queue_index, &self.call_evts[queue_index])
+                .or(Err(ActivateError::BadActivate))?;
 
             println!("FUCK activate 6");
 
-
-            master.set_vring_kick(queue_index, &self.queue_evts[queue_index]).or(Err(ActivateError::BadActivate))?;
+            master
+                .set_vring_kick(queue_index, &self.queue_evts[queue_index])
+                .or(Err(ActivateError::BadActivate))?;
 
             println!("FUCK activate 7");
 
-
-
-            master.set_vring_enable(queue_index, true).or(Err(ActivateError::BadActivate))?;
+            master
+                .set_vring_enable(queue_index, true)
+                .or(Err(ActivateError::BadActivate))?;
 
             println!("FUCK activate 8");
-
         }
 
         self.device_state = DeviceState::Activated(mem);
@@ -274,7 +300,7 @@ impl VirtioDevice for VhostUserBlock {
 pub fn update_mem_table(vu: &mut Master, mem: &GuestMemoryMmap) -> Result<()> {
     let mut regions: Vec<VhostUserMemoryRegionInfo> = Vec::new();
     mem.with_regions_mut(|_, region| {
-    println!("FUCK activate {:?}", region);
+        println!("FUCK activate {:?}", region);
 
         let (mmap_handle, mmap_offset) = match region.file_offset() {
             Some(_file_offset) => (_file_offset.file().as_raw_fd(), _file_offset.start()),
@@ -296,12 +322,10 @@ pub fn update_mem_table(vu: &mut Master, mem: &GuestMemoryMmap) -> Result<()> {
 
     println!("FUCK activate 211");
 
-
     vu.set_mem_table(regions.as_slice())
         .map_err(Error::VhostUserBackend)?;
 
     println!("FUCK activate 212");
-    
 
     Ok(())
 }

@@ -1,4 +1,6 @@
 pub mod block;
+pub mod event_handler;
+
 
 use std::{io, result};
 use vhost_rs::Error as VhostError;
@@ -7,6 +9,7 @@ use super::ActivateError;
 
 
 pub use self::block::VhostUserBlock;
+pub use self::event_handler::*;
 
 pub const CONFIG_SPACE_SIZE: usize = 8;
 pub const QUEUE_SIZE: u16 = 256;

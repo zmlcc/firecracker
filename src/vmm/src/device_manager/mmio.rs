@@ -106,6 +106,8 @@ impl MMIODeviceManager {
             return Err(Error::IrqsExhausted);
         }
 
+        use std::os::unix::io::AsRawFd;
+
         for (i, queue_evt) in mmio_device
             .locked_device()
             .queue_events()
@@ -119,6 +121,8 @@ impl MMIODeviceManager {
             vm.register_ioevent(queue_evt, &io_addr, i as u32)
                 .map_err(Error::RegisterIoEvent)?;
         }
+
+        println!("FUCK register_mmio_device {} {}", mmio_device.locked_device().interrupt_evt().as_raw_fd(), self.irq);
 
         vm.register_irqfd(mmio_device.locked_device().interrupt_evt(), self.irq)
             .map_err(Error::RegisterIrqFd)?;

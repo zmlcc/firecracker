@@ -840,9 +840,9 @@ fn attach_vu_block_devices(
     use self::StartMicrovmError::*;
 
     for vu_block_device in vu_block_builder.iter() {
-        // event_manager
-        //     .add_subscriber(vu_block_device.clone())
-        //     .map_err(RegisterEvent)?;
+        event_manager
+            .add_subscriber(vu_block_device.clone())
+            .map_err(RegisterEvent)?;
 
         let id = vu_block_device.lock().unwrap().id().clone();
         // The device mutex mustn't be locked here otherwise it will deadlock.

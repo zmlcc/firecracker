@@ -258,24 +258,20 @@ pub fn build_microvm(
             .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
     )?;
 
-    println!("FUCK huge {:?}", vm_resources.vm_config().hugetlb_enabled);
+    println!("FUCK huge {:?}", vm_resources.vm_config().hugetlb_path);
     println!("FUCK mem_size_mib {:?}", vm_resources.vm_config().mem_size_mib);
     println!("FUCK hugetlb_path {:?}", vm_resources.vm_config().hugetlb_path);
 
     #[cfg(feature = "hugetlb")]
-    let guest_memory = match vm_resources.vm_config().hugetlb_enabled {
-        Some(true) => create_guest_hugetlb_memory(
+    let guest_memory = match &vm_resources.vm_config().hugetlb_path {
+        Some(hugetlb_path) => create_guest_hugetlb_memory(
             vm_resources
                 .vm_config()
                 .mem_size_mib
                 .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
-            &vm_resources
-                .vm_config()
-                .hugetlb_path
-                .as_ref()
-                .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
+                &hugetlb_path,
         ),
-        _ => create_guest_memory(
+        None => create_guest_memory(
             vm_resources
                 .vm_config()
                 .mem_size_mib

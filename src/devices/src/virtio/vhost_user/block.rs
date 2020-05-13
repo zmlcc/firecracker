@@ -249,6 +249,7 @@ impl VirtioDevice for VhostUserBlock {
             println!("FUCK activate 3");
 
         println!("FUCK FDINFO queue_evt {}", self.queue_evts[queue_index].as_raw_fd());
+        println!("FUCK FDINFO call_evt {}", self.call_evts[queue_index].as_raw_fd());
 
 
             let data = &VringConfigData {

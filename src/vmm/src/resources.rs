@@ -18,8 +18,6 @@ use vmm_config::mmds::{MmdsConfig, MmdsConfigError};
 use vmm_config::net::*;
 use vmm_config::vsock::*;
 use vstate::VcpuConfig;
-#[cfg(feature = "hugetlb")]
-use vstate::VMemoryConfig;
 
 use vmm_config::vu_block::*;
 
@@ -165,18 +163,6 @@ impl VmResources {
         }
     }
 
-    #[cfg(feature = "hugetlb")]
-    /// Returns a VcpuConfig based on the vm config.
-    pub fn vmemory_config(&self) -> VMemoryConfig {
-        // The unwraps are ok to use because the values are initialized using defaults if not
-        // supplied by the user.
-        VMemoryConfig {
-            mem_size_mib: self.vm_config().mem_size_mib.unwrap(),
-            hugetlb_enabled: self.vm_config().hugetlb_enabled.unwrap(),
-            hugetlb_path: self.vm_config().hugetlb_path.clone(),
-        }
-    }
-
     /// Returns the VmConfig.
     pub fn vm_config(&self) -> &VmConfig {
         &self.vm_config
@@ -219,8 +205,7 @@ impl VmResources {
         }
 
         #[cfg(feature = "hugetlb")]
-        if machine_config.hugetlb_enabled.is_some() {
-            self.vm_config.hugetlb_enabled = machine_config.hugetlb_enabled;
+        if machine_config.hugetlb_path.is_some() {
             self.vm_config.hugetlb_path = machine_config.hugetlb_path.clone();
         }
 

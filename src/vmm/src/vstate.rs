@@ -566,17 +566,6 @@ pub struct VmState {
     ioapic: kvm_irqchip,
 }
 
-#[cfg(feature = "hugetlb")]
-/// Encapsulates configuration parameters for the guest vMemory.
-#[derive(Debug, PartialEq)]
-pub struct VMemoryConfig {
-    /// Memory size.
-    pub mem_size_mib: usize,
-    /// Enable hugetlb.
-    pub hugetlb_enabled: bool,
-    /// Hugetlb path.
-    pub hugetlb_path: Option<String>,
-}
 
 /// Encapsulates configuration parameters for the guest vCPUS.
 #[derive(Debug, PartialEq)]

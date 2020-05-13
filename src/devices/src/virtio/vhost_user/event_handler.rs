@@ -1,4 +1,3 @@
-
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 
@@ -9,7 +8,7 @@ use std::os::unix::io::AsRawFd;
 use crate::virtio::device::VirtioDevice;
 
 impl Subscriber for VhostUserBlock {
-    fn process(&mut self, event: &EpollEvent, event_manager: &mut EventManager){
+    fn process(&mut self, event: &EpollEvent, _event_manager: &mut EventManager) {
         let source = event.fd();
         let event_set = event.event_set();
 
@@ -36,9 +35,11 @@ impl Subscriber for VhostUserBlock {
             //     _ if activate_fd == source => self.process_activate_event(evmgr),
             //     _ => warn!("Block: Spurious event received: {:?}", source),
             // }
+            // println!("FUCK  signal used queue");
+            // source.read();
 
+            // event.data()
             self.signal_used_queue();
-
         } else {
             warn!(
                 "Block: The device is not yet activated. Spurious event received: {:?}",
@@ -48,12 +49,14 @@ impl Subscriber for VhostUserBlock {
     }
 
     fn interest_list(&self) -> Vec<EpollEvent> {
-        // vec![EpollEvent::new(
-        //     EventSet::IN,
-        //     self.interrupt_evt.as_raw_fd() as u64,
-        // )]
-        self.call_evts.iter().map(|evt| {
-            EpollEvent::new(EventSet::IN, evt.as_raw_fd() as u64)
-        }).collect()
+        self.call_evts
+            .iter()
+            .map(|evt| {
+                EpollEvent::new(
+                    EventSet::IN | EventSet::EDGE_TRIGGERED,
+                    evt.as_raw_fd() as u64,
+                )
+            })
+            .collect()
     }
 }

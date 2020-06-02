@@ -85,7 +85,7 @@ pub fn arch_memory_regions(size: usize) -> Vec<(GuestAddress, usize)> {
 pub fn arch_huge_memory_regions(size: usize) -> Vec<(GuestAddress, usize)> {
     match size.checked_sub(LAST_ADDR_BEFORE_GAP) {
         // case1: guest memory fits before the gap
-        None | Some(0) => vec![(GuestAddress(0), std::cmp::min(size, LAST_ADDR_BEFORE_GAP))],
+        None | Some(0) => vec![(GuestAddress(0), size)],
         // case2: guest memory extends beyond the gap
         Some(remaining) => vec![
             (GuestAddress(0), LAST_ADDR_BEFORE_GAP),

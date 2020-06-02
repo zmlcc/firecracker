@@ -738,6 +738,7 @@ mod tests {
             mem_size_mib: Some(512),
             ht_enabled: Some(true),
             cpu_template: Some(CpuFeaturesTemplate::T2),
+            hugetlb_path: None,
         };
 
         assert_ne!(vm_resources.vm_config, aux_vm_config);

@@ -24,22 +24,8 @@ impl Subscriber for VhostUserBlock {
         }
 
         if self.is_activated() {
-            // let queue_evt = self.queue_evts[0].as_raw_fd();
-            // let rate_limiter_evt = self.rate_limiter.as_raw_fd();
-            // let activate_fd = self.activate_evt.as_raw_fd();
-
-            // // Looks better than C style if/else if/else.
-            // match source {
-            //     _ if queue_evt == source => self.process_queue_event(),
-            //     _ if rate_limiter_evt == source => self.process_rate_limiter_event(),
-            //     _ if activate_fd == source => self.process_activate_event(evmgr),
-            //     _ => warn!("Block: Spurious event received: {:?}", source),
-            // }
-            // println!("FUCK  signal used queue");
-            // source.read();
-
-            // event.data()
-            self.signal_used_queue();
+            // just send irq.
+            let _ = self.signal_used_queue();
         } else {
             warn!(
                 "Block: The device is not yet activated. Spurious event received: {:?}",

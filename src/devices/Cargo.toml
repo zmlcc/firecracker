@@ -18,4 +18,6 @@ versionize = { path = "../versionize" }
 versionize_derive = { path = "../versionize_derive" }
 virtio_gen = { path = "../virtio_gen" }
 
-vhost_rs = { git = "https://github.com/cloud-hypervisor/vhost", branch = "dragonball", package = "vhost", features = ["vhost-user-master"] }
+vhost_rs = { path = "/root/code/rust/vhost", package = "vhost", features = ["vhost-user-master"] }
+memfd = "0.3.0"
+thiserror = "1.0"

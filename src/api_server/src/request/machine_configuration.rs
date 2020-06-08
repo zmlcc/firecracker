@@ -70,7 +70,7 @@ mod tests {
             ht_enabled: Some(true),
             cpu_template: Some(CpuFeaturesTemplate::T2),
             #[cfg(feature = "hugetlb")]
-            hugetlb_enabled: Some(false),
+            hugetlb_path: None,
         };
         let body = r#"{
                 "vcpu_count": 8,

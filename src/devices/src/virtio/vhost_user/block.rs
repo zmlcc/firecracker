@@ -1,8 +1,15 @@
-use super::super::{ActivateError, ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_BLOCK, VIRTIO_MMIO_INT_VRING};
-use super::{Error, Result, CONFIG_SPACE_SIZE, NUM_QUEUES, QUEUE_SIZES};
+use super::super::{
+    ActivateError, ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_BLOCK,
+    VIRTIO_MMIO_INT_VRING,
+};
+use super::{
+    Result, VuError as Error, CONFIG_SPACE_SIZE, NUM_QUEUES, QUEUE_SIZES, VHOST_RECOVERY_MEM_SIZE,
+};
 use utils::eventfd::EventFd;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use super::ucloud_ext::create_shared_mem;
 
 use std::cmp;
 use std::io::Write;
@@ -10,9 +17,9 @@ use std::sync::Arc;
 
 use std::result;
 
-use crate::{Error as DeviceError};
+use crate::Error as DeviceError;
 use vm_memory::GuestMemory;
-use vm_memory::{Address, GuestMemoryMmap, GuestMemoryRegion};
+use vm_memory::{Address, GuestMemoryMmap, GuestMemoryRegion, MmapRegion};
 
 use std::os::unix::io::AsRawFd;
 
@@ -22,6 +29,7 @@ use vhost_rs::vhost_user::message::VhostUserConfigFlags;
 use vhost_rs::vhost_user::message::VHOST_USER_CONFIG_OFFSET;
 use vhost_rs::vhost_user::message::{VhostUserProtocolFeatures, VhostUserVirtioFeatures};
 
+use vhost_rs::UCloudExt;
 use vhost_rs::{VhostBackend, VhostUserMemoryRegionInfo, VringConfigData};
 use virtio_gen::virtio_blk::*;
 
@@ -40,8 +48,10 @@ pub struct VhostUserBlock {
 
     // Implementation specific fields.
     pub(crate) id: String,
-    vhost_user_master: Master,
+    pub(crate) vhost_user_master: Master,
+    vhost_user_socket_path: String,
     pub(crate) call_evts: Vec<EventFd>,
+    recovery_fds: Vec<MmapRegion>,
 }
 
 impl std::fmt::Debug for VhostUserBlock {
@@ -88,6 +98,9 @@ impl VhostUserBlock {
             println!("FUCK protocol_features {:#x}", protocol_features);
             protocol_features &= !VhostUserProtocolFeatures::MQ;
             protocol_features &= !VhostUserProtocolFeatures::INFLIGHT_SHMFD;
+
+            protocol_features &= !VhostUserProtocolFeatures::NO_RECOVERY;
+
             master
                 .set_protocol_features(protocol_features)
                 .map_err(Error::VhostUserBackend)?;
@@ -105,9 +118,9 @@ impl VhostUserBlock {
 
         println!("FUCKK config_space {:?}", config_space);
 
-        master
-            .set_vring_base(0, 0)
-            .map_err(Error::VhostUserBackend)?;
+        // master
+        //     .set_vring_base(0, 0)
+        //     .map_err(Error::VhostUserBackend)?;
 
         let queues = QUEUE_SIZES.iter().map(|&s| Queue::new(s)).collect();
         let mut queue_evts = Vec::new();
@@ -116,8 +129,13 @@ impl VhostUserBlock {
         }
 
         let mut call_evts = Vec::new();
-        for _ in QUEUE_SIZES.iter() {
+        let mut recovery_fds = Vec::new();
+        for i in QUEUE_SIZES.iter() {
             call_evts.push(EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?);
+            recovery_fds.push(create_shared_mem(
+                &format!("vhost-recovery-{}-{}", id, i),
+                VHOST_RECOVERY_MEM_SIZE,
+            )?);
         }
 
         Ok(VhostUserBlock {
@@ -132,6 +150,8 @@ impl VhostUserBlock {
             id,
             vhost_user_master: master,
             call_evts,
+            vhost_user_socket_path: String::from(socket_path),
+            recovery_fds,
         })
     }
 
@@ -148,6 +168,137 @@ impl VhostUserBlock {
             error!("Failed to signal used queue: {:?}", e);
             DeviceError::FailedSignalingUsedQueue(e)
         })?;
+        Ok(())
+    }
+
+    pub(crate) fn reconnect(&mut self) {
+        let mem = match self.device_state {
+            DeviceState::Activated(ref mem) => mem,
+            // This should never happen, it's been already validated in the event handler.
+            DeviceState::Inactive => unreachable!(),
+        };
+
+        let mut master = self.reconnect_master();
+        self.reset_backend(&mut master, &mem);
+
+        self.vhost_user_master = master;
+    }
+
+    fn reconnect_master(&self) -> Master {
+        let master = loop {
+            match Master::connect(&self.vhost_user_socket_path, NUM_QUEUES as u64) {
+                Ok(m) => break m,
+                Err(_) => {
+                    // should record connection error in metrics
+                    println!("FUCK RECONNECT FAILED");
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    continue;
+                }
+            }
+        };
+
+        master
+    }
+
+    fn reset_backend(&self, master: &mut Master, mem: &GuestMemoryMmap) -> Result<()> {
+        let queues = &self.queues;
+        // let master = &mut self.vhost_user_master;
+
+
+
+
+        master
+            .set_features(self.acked_features)
+            .map_err(Error::VhostUserBackend)?;
+
+        // master.set_protocol_features(features: VhostUserProtocolFeatures)
+
+        master.set_owner().map_err(Error::VhostUserBackend)?;
+
+        println!("FUCK activate 2");
+
+        update_mem_table(master, &mem)?;
+
+        println!("FUCK activate 222");
+
+        for (queue_index, queue) in queues.into_iter().enumerate() {
+            master
+            .get_vring_base(queue_index)
+            .map_err(Error::VhostUserBackend)?;
+
+            master
+                .set_vring_num(queue_index, queue.actual_size())
+                .map_err(Error::VhostUserBackend)?;
+
+            println!("FUCK activate 3");
+
+            println!(
+                "FUCK FDINFO queue_evt {}",
+                self.queue_evts[queue_index].as_raw_fd()
+            );
+            println!(
+                "FUCK FDINFO call_evt {}",
+                self.call_evts[queue_index].as_raw_fd()
+            );
+
+            let data = &VringConfigData {
+                queue_max_size: queue.get_max_size(),
+                queue_size: queue.actual_size(),
+                flags: 0u32,
+                desc_table_addr: mem
+                    .get_host_address(queue.desc_table)
+                    .or(Err(Error::GetHostAddress))? as u64,
+                used_ring_addr: mem
+                    .get_host_address(queue.used_ring)
+                    .or(Err(Error::GetHostAddress))? as u64,
+                avail_ring_addr: mem
+                    .get_host_address(queue.avail_ring)
+                    .or(Err(Error::GetHostAddress))? as u64,
+                log_addr: None,
+            };
+
+            master
+                .set_vring_addr(queue_index, data)
+                .map_err(Error::VhostUserBackend)?;
+
+            println!("FUCK activate 4");
+
+            master
+                .set_vring_base(queue_index, 0u16)
+                .map_err(Error::VhostUserBackend)?;
+
+            println!("FUCK activate 5");
+
+            master
+                .set_vring_call(queue_index, &self.call_evts[queue_index])
+                .map_err(Error::VhostUserBackend)?;
+
+            println!("FUCK activate 6");
+
+            let recovery_fd = self.recovery_fds[queue_index]
+                .file_offset()
+                .ok_or(Error::MemoryMapFD)?
+                .file()
+                .as_raw_fd();
+            master
+                .set_recovery_fd(queue_index, recovery_fd)
+                .map_err(Error::VhostUserBackend)?;
+
+                println!("FUCK activate 666");
+
+            master
+                .set_vring_kick(queue_index, &self.queue_evts[queue_index])
+                .map_err(Error::VhostUserBackend)?;
+
+            println!("FUCK activate 7");
+
+            master
+                .set_vring_enable(queue_index, true)
+                .map_err(Error::VhostUserBackend)?;
+
+            println!("FUCK activate 8");
+        }
+
         Ok(())
     }
 }
@@ -224,7 +375,10 @@ impl VirtioDevice for VhostUserBlock {
     fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
         println!("FUCK activate acked_features {:#x}", self.acked_features);
 
-        println!("FUCK FDINFO interrupt_evt {}", self.interrupt_evt.as_raw_fd());
+        println!(
+            "FUCK FDINFO interrupt_evt {}",
+            self.interrupt_evt.as_raw_fd()
+        );
 
         let queues = &self.queues;
         let master = &mut self.vhost_user_master;
@@ -248,17 +402,28 @@ impl VirtioDevice for VhostUserBlock {
 
             println!("FUCK activate 3");
 
-        println!("FUCK FDINFO queue_evt {}", self.queue_evts[queue_index].as_raw_fd());
-        println!("FUCK FDINFO call_evt {}", self.call_evts[queue_index].as_raw_fd());
-
+            println!(
+                "FUCK FDINFO queue_evt {}",
+                self.queue_evts[queue_index].as_raw_fd()
+            );
+            println!(
+                "FUCK FDINFO call_evt {}",
+                self.call_evts[queue_index].as_raw_fd()
+            );
 
             let data = &VringConfigData {
                 queue_max_size: queue.get_max_size(),
                 queue_size: queue.actual_size(),
                 flags: 0u32,
-                desc_table_addr: mem.get_host_address(queue.desc_table).or(Err(ActivateError::BadActivate))? as u64,
-                used_ring_addr: mem.get_host_address(queue.used_ring).or(Err(ActivateError::BadActivate))? as u64,
-                avail_ring_addr: mem.get_host_address(queue.avail_ring).or(Err(ActivateError::BadActivate))? as u64,
+                desc_table_addr: mem
+                    .get_host_address(queue.desc_table)
+                    .or(Err(ActivateError::BadActivate))? as u64,
+                used_ring_addr: mem
+                    .get_host_address(queue.used_ring)
+                    .or(Err(ActivateError::BadActivate))? as u64,
+                avail_ring_addr: mem
+                    .get_host_address(queue.avail_ring)
+                    .or(Err(ActivateError::BadActivate))? as u64,
                 log_addr: None,
             };
 
@@ -279,6 +444,18 @@ impl VirtioDevice for VhostUserBlock {
                 .or(Err(ActivateError::BadActivate))?;
 
             println!("FUCK activate 6");
+
+            let recovery_fd = self.recovery_fds[queue_index]
+                .file_offset()
+                .ok_or(Error::MemoryMapFD)?
+                .file()
+                .as_raw_fd();
+            master
+                .set_recovery_fd(queue_index, recovery_fd)
+                .map_err(Error::VhostUserBackend)?;
+
+            println!("FUCK activate 666");
+
 
             master
                 .set_vring_kick(queue_index, &self.queue_evts[queue_index])

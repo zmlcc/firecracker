@@ -419,6 +419,8 @@ impl VsockMuxer {
         // valid connection request. I.e. `b"connect 0\n".len()`.
         const MIN_READ_LEN: usize = 10;
 
+        stream.set_nonblocking(false);
+
         // Bring in the minimum number of bytes that we should be able to read.
         stream
             .read_exact(&mut buf[..MIN_READ_LEN])
@@ -434,6 +436,8 @@ impl VsockMuxer {
                 .map_err(Error::UnixRead)?;
             blen += 1;
         }
+
+        stream.set_nonblocking(true);
 
         let mut word_iter = std::str::from_utf8(&buf[..blen])
             .map_err(|_| Error::InvalidPortRequest)?

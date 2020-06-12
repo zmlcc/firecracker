@@ -45,15 +45,13 @@ impl Subscriber for VhostUserBlock {
                         .unwrap_or_else(|e| {
                             error!("Failed to register block queue with event manager: {:?}", e);
                         });
-                    event_manager.unregister(source).unwrap_or_else(|e| {
-                        error!("Failed to unregister block activate evt: {:?}", e);
-                    })
+                    let _ = event_manager.unregister(source);
                 }
                 _ if self.call_evts.iter().any(|x| source == x.as_raw_fd()) => {
-                    println!("FUCK call signal {:?}", event_set);
-                    if event_set.contains(EventSet::IN) {
+                    // println!("FUCK call signal {:?}", event_set);
+                    // if event_set.contains(EventSet::IN) {
                         let _ = self.signal_used_queue();
-                    }
+                    // }
                 }
                 _ => warn!("VhostUserBlock: Spurious event received: {:?}", source),
             }

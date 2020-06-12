@@ -10,7 +10,7 @@ type Result<T> = result::Result<T, VuBlockError>;
 #[derive(Debug)]
 pub enum VuBlockError {
     /// Unable to create block device
-    CreateBlockDevice(devices::virtio::vhost_user::Error)
+    CreateBlockDevice(devices::virtio::vhost_user::VuError)
 
 }
 

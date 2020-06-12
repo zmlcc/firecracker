@@ -15,7 +15,7 @@ pub use self::event_handler::*;
 pub const CONFIG_SPACE_SIZE: usize = 8;
 pub const QUEUE_SIZE: u16 = 256;
 pub const NUM_QUEUES: usize = 1;
-pub const QUEUE_SIZES: &[u16] = &[QUEUE_SIZE];
+pub const QUEUE_SIZES: &[u16] = &[QUEUE_SIZE; NUM_QUEUES];
 
 pub const VHOST_RECOVERY_MEM_SIZE: usize = 8192;
 
@@ -31,7 +31,7 @@ pub enum VuError {
     NoMemoryRegion,
     /// Failed to get host address.
     #[error("failed to get host address")]
-    GetHostAddress, 
+    GetHostAddress,
     #[error("failed to create shared memory")]
     SharedMemory(#[from] ucloud_ext::SharedMemoryError),
     #[error("failed to get momery map fd")]
@@ -43,7 +43,5 @@ impl From<VuError> for ActivateError {
         ActivateError::BadActivate
     }
 }
-
-
 
 pub type Result<T> = result::Result<T, VuError>;

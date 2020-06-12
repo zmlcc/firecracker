@@ -87,22 +87,26 @@ impl VhostUserBlock {
             .map_err(Error::VhostUserBackend)?;
 
         let mut acked_features = 0u64;
+        let mut acked_protocol_features = VhostUserProtocolFeatures::CONFIG;
         if backend_features & VhostUserVirtioFeatures::PROTOCOL_FEATURES.bits() != 0 {
             println!("FUCK 3");
 
             acked_features |= VhostUserVirtioFeatures::PROTOCOL_FEATURES.bits();
 
-            let mut protocol_features = master
+            let protocol_features = master
                 .get_protocol_features()
                 .map_err(Error::VhostUserBackend)?;
             println!("FUCK protocol_features {:#x}", protocol_features);
-            protocol_features &= !VhostUserProtocolFeatures::MQ;
-            protocol_features &= !VhostUserProtocolFeatures::INFLIGHT_SHMFD;
+            // protocol_features &= !VhostUserProtocolFeatures::MQ;
+            // protocol_features &= !VhostUserProtocolFeatures::INFLIGHT_SHMFD;
 
-            protocol_features &= !VhostUserProtocolFeatures::NO_RECOVERY;
+            // protocol_features &= !VhostUserProtocolFeatures::NO_RECOVERY;
+
+            acked_protocol_features &= protocol_features;
+            println!("FUCK protocol_features {:#x}", acked_protocol_features);
 
             master
-                .set_protocol_features(protocol_features)
+                .set_protocol_features(acked_protocol_features)
                 .map_err(Error::VhostUserBackend)?;
         }
 
@@ -130,7 +134,7 @@ impl VhostUserBlock {
 
         let mut call_evts = Vec::new();
         let mut recovery_fds = Vec::new();
-        for i in QUEUE_SIZES.iter() {
+        for i in 0..QUEUE_SIZES.len() {
             call_evts.push(EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?);
             recovery_fds.push(create_shared_mem(
                 &format!("vhost-recovery-{}-{}", id, i),
@@ -179,7 +183,8 @@ impl VhostUserBlock {
         };
 
         let mut master = self.reconnect_master();
-        self.reset_backend(&mut master, &mem);
+        let ret = self.reset_backend(&mut master, &mem);
+        println!("FUCK  reconnect {:?}", ret);
 
         self.vhost_user_master = master;
     }
@@ -191,7 +196,7 @@ impl VhostUserBlock {
                 Err(_) => {
                     // should record connection error in metrics
                     println!("FUCK RECONNECT FAILED");
-                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    std::thread::sleep(std::time::Duration::from_secs(5));
                     continue;
                 }
             }
@@ -204,14 +209,26 @@ impl VhostUserBlock {
         let queues = &self.queues;
         // let master = &mut self.vhost_user_master;
 
+        println!("FUCK reset 1 {:?}", self.avail_features);
 
-
-
+        master.get_features().map_err(Error::VhostUserBackend)?;
         master
-            .set_features(self.acked_features)
+            .set_features(self.avail_features)
             .map_err(Error::VhostUserBackend)?;
 
-        // master.set_protocol_features(features: VhostUserProtocolFeatures)
+        println!("FUCK reset 11");
+
+        if self.avail_features & VhostUserVirtioFeatures::PROTOCOL_FEATURES.bits() != 0 {
+            println!("FUCK reset 101");
+
+            master
+                .set_protocol_features(VhostUserProtocolFeatures::CONFIG)
+                .map_err(Error::VhostUserBackend)?;
+            println!("FUCK reset 12");
+        }
+
+
+        println!("FUCK reset 13");
 
         master.set_owner().map_err(Error::VhostUserBackend)?;
 
@@ -222,9 +239,9 @@ impl VhostUserBlock {
         println!("FUCK activate 222");
 
         for (queue_index, queue) in queues.into_iter().enumerate() {
-            master
-            .get_vring_base(queue_index)
-            .map_err(Error::VhostUserBackend)?;
+            // master
+            // .get_vring_base(queue_index)
+            // .map_err(Error::VhostUserBackend)?;
 
             master
                 .set_vring_num(queue_index, queue.actual_size())
@@ -284,7 +301,7 @@ impl VhostUserBlock {
                 .set_recovery_fd(queue_index, recovery_fd)
                 .map_err(Error::VhostUserBackend)?;
 
-                println!("FUCK activate 666");
+            println!("FUCK activate 666");
 
             master
                 .set_vring_kick(queue_index, &self.queue_evts[queue_index])
@@ -455,7 +472,6 @@ impl VirtioDevice for VhostUserBlock {
                 .map_err(Error::VhostUserBackend)?;
 
             println!("FUCK activate 666");
-
 
             master
                 .set_vring_kick(queue_index, &self.queue_evts[queue_index])

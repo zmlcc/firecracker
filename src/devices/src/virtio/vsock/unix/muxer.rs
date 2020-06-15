@@ -361,7 +361,7 @@ impl VsockMuxer {
                     .map_err(Error::UnixAccept)
                     .and_then(|(stream, _)| {
                         stream
-                            .set_nonblocking(true)
+                            .set_nonblocking(false)
                             .map(|_| stream)
                             .map_err(Error::UnixAccept)
                     })
@@ -433,6 +433,8 @@ impl VsockMuxer {
                 .map_err(Error::UnixRead)?;
             blen += 1;
         }
+
+        stream.set_nonblocking(true).map_err(Error::UnixRead)?;
 
         let mut word_iter = std::str::from_utf8(&buf[..blen])
             .map_err(|_| Error::InvalidPortRequest)?

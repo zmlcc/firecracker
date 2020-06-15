@@ -3,12 +3,13 @@
 
 use super::super::VmmAction;
 use logger::{Metric, METRICS};
-use request::{Body, Error, ParsedRequest};
+use parsed_request::{Error, ParsedRequest};
+use request::Body;
 use vmm::vmm_config::logger::LoggerConfig;
 
 pub fn parse_put_logger(body: &Body) -> Result<ParsedRequest, Error> {
     METRICS.put_api_requests.logger_count.inc();
-    Ok(ParsedRequest::Sync(VmmAction::ConfigureLogger(
+    Ok(ParsedRequest::new_sync(VmmAction::ConfigureLogger(
         serde_json::from_slice::<LoggerConfig>(body.raw()).map_err(|e| {
             METRICS.put_api_requests.logger_fails.inc();
             Error::SerdeJson(e)
@@ -18,31 +19,39 @@ pub fn parse_put_logger(body: &Body) -> Result<ParsedRequest, Error> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+    use crate::parsed_request::tests::vmm_action_from_request;
     use vmm::vmm_config::logger::LoggerLevel;
 
     #[test]
     fn test_parse_put_logger_request() {
         let body = r#"{
-                "log_fifo": "log",
-                "metrics_fifo": "metrics",
+                "log_path": "log",
                 "level": "Warning",
                 "show_level": false,
                 "show_log_origin": false
               }"#;
 
-        let desc_clone = LoggerConfig {
-            log_fifo: String::from("log"),
-            metrics_fifo: String::from("metrics"),
+        let expected_cfg = LoggerConfig {
+            log_path: PathBuf::from("log"),
             level: LoggerLevel::Warning,
             show_level: false,
             show_log_origin: false,
         };
-        match parse_put_logger(&Body::new(body)) {
-            Ok(ParsedRequest::Sync(VmmAction::ConfigureLogger(desc))) => {
-                assert_eq!(desc, desc_clone)
-            }
+        match vmm_action_from_request(parse_put_logger(&Body::new(body)).unwrap()) {
+            VmmAction::ConfigureLogger(cfg) => assert_eq!(cfg, expected_cfg),
             _ => panic!("Test failed."),
         }
+
+        let invalid_body = r#"{
+                "invalid_field": "log",
+                "level": "Warning",
+                "show_level": false,
+                "show_log_origin": false
+              }"#;
+
+        assert!(parse_put_logger(&Body::new(invalid_body)).is_err());
     }
 }

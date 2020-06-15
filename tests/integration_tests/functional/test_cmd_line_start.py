@@ -3,11 +3,13 @@
 """Tests microvm start with configuration file as command line parameter."""
 
 import os
-from subprocess import run, PIPE
+import re
+
+from retry.api import retry_call
 
 import pytest
 
-import host_tools.logging as log_tools
+import framework.utils as utils
 
 
 def _configure_vm_from_json(test_microvm, vm_config_file):
@@ -54,18 +56,11 @@ def test_config_start_with_api(test_microvm_with_ssh, vm_config_file):
 
 @pytest.mark.parametrize(
     "vm_config_file",
-    ["framework/vm_log_config.json"]
+    ["framework/vm_config.json"]
 )
 def test_config_start_no_api(test_microvm_with_ssh, vm_config_file):
     """Test microvm start when API server thread is disabled."""
     test_microvm = test_microvm_with_ssh
-
-    log_fifo_path = os.path.join(test_microvm.path, 'log_fifo')
-    metrics_fifo_path = os.path.join(test_microvm.path, 'metrics_fifo')
-    log_fifo = log_tools.Fifo(log_fifo_path)
-    metrics_fifo = log_tools.Fifo(metrics_fifo_path)
-    test_microvm.create_jailed_resource(log_fifo.path, create_jail=True)
-    test_microvm.create_jailed_resource(metrics_fifo.path, create_jail=True)
 
     _configure_vm_from_json(test_microvm, vm_config_file)
     test_microvm.jailer.extra_args.update({'no-api': None})
@@ -79,14 +74,17 @@ def test_config_start_no_api(test_microvm_with_ssh, vm_config_file):
     cmd = 'ps -T --no-headers -p {} | awk \'{{print $5}}\''.format(
         firecracker_pid
     )
-    process = run(cmd, stdout=PIPE, stderr=PIPE, shell=True, check=True)
-    threads_out_lines = process.stdout.decode('utf-8').splitlines()
 
-    # Check that API server thread was not created.
-    assert 'fc_api' not in threads_out_lines
-    # Sanity check that main thread was created.
-    assert 'firecracker' in threads_out_lines
-
-    # Check that microvm was successfully booted.
-    lines = log_fifo.sequential_reader(1)
-    assert lines[0].startswith('Running Firecracker')
+    # Retry running 'ps' in case it failed to list the firecracker process
+    # The regex matches any expression that contains 'firecracker' and does
+    # not contain 'fc_api'
+    retry_call(
+        utils.search_output_from_cmd,
+        fkwargs={
+            "cmd": cmd,
+            "find_regex": re.compile("^(?!.*fc_api)(?:.*)?firecracker",
+                                     re.DOTALL)
+            },
+        exceptions=RuntimeError,
+        tries=10,
+        delay=1)

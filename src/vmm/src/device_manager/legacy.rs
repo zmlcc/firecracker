@@ -7,10 +7,10 @@
 #![cfg(target_arch = "x86_64")]
 
 use std::fmt;
-use std::io::{self, stdout};
 use std::sync::{Arc, Mutex};
 
 use devices;
+use kvm_ioctls::VmFd;
 use utils::eventfd::EventFd;
 
 /// Errors corresponding to the `PortIODeviceManager`.
@@ -19,7 +19,7 @@ pub enum Error {
     /// Cannot add legacy device to Bus.
     BusError(devices::BusError),
     /// Cannot create EventFd.
-    EventFd(io::Error),
+    EventFd(std::io::Error),
 }
 
 impl fmt::Display for Error {
@@ -50,26 +50,28 @@ pub struct PortIODeviceManager {
 
 impl PortIODeviceManager {
     /// Create a new DeviceManager handling legacy devices (uart, i8042).
-    pub fn new() -> Result<Self> {
+    pub fn new(
+        serial: Arc<Mutex<devices::legacy::Serial>>,
+        i8042_reset_evfd: EventFd,
+    ) -> Result<Self> {
         let io_bus = devices::Bus::new();
-        let com_evt_1_3 = EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?;
+        let com_evt_1_3 = serial
+            .lock()
+            .expect("Poisoned lock")
+            .interrupt_evt()
+            .try_clone()
+            .map_err(Error::EventFd)?;
         let com_evt_2_4 = EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?;
         let kbd_evt = EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?;
-        let stdio_serial = Arc::new(Mutex::new(devices::legacy::Serial::new_out(
-            com_evt_1_3.try_clone().map_err(Error::EventFd)?,
-            Box::new(stdout()),
-        )));
 
-        // Create exit event for i8042
-        let exit_evt = EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?;
         let i8042 = Arc::new(Mutex::new(devices::legacy::I8042Device::new(
-            exit_evt,
-            kbd_evt.try_clone().unwrap(),
+            i8042_reset_evfd,
+            kbd_evt.try_clone().map_err(Error::EventFd)?,
         )));
 
         Ok(PortIODeviceManager {
             io_bus,
-            stdio_serial,
+            stdio_serial: serial,
             i8042,
             com_evt_1_3,
             com_evt_2_4,
@@ -77,9 +79,8 @@ impl PortIODeviceManager {
         })
     }
 
-    #[cfg(target_arch = "x86_64")]
     /// Register supported legacy devices.
-    pub fn register_devices(&mut self) -> Result<()> {
+    pub fn register_devices(&mut self, vm_fd: &VmFd) -> Result<()> {
         self.io_bus
             .insert(self.stdio_serial.clone(), 0x3f8, 0x8)
             .map_err(Error::BusError)?;
@@ -113,6 +114,17 @@ impl PortIODeviceManager {
         self.io_bus
             .insert(self.i8042.clone(), 0x060, 0x5)
             .map_err(Error::BusError)?;
+
+        vm_fd
+            .register_irqfd(&self.com_evt_1_3, 4)
+            .map_err(|e| Error::EventFd(std::io::Error::from_raw_os_error(e.errno())))?;
+        vm_fd
+            .register_irqfd(&self.com_evt_2_4, 3)
+            .map_err(|e| Error::EventFd(std::io::Error::from_raw_os_error(e.errno())))?;
+        vm_fd
+            .register_irqfd(&self.kbd_evt, 1)
+            .map_err(|e| Error::EventFd(std::io::Error::from_raw_os_error(e.errno())))?;
+
         Ok(())
     }
 }
@@ -120,13 +132,20 @@ impl PortIODeviceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vm_memory::{GuestAddress, GuestMemoryMmap};
 
     #[test]
-    #[cfg(target_arch = "x86_64")]
     fn test_register_legacy_devices() {
-        let ldm = PortIODeviceManager::new();
-        assert!(ldm.is_ok());
-        assert!(&ldm.unwrap().register_devices().is_ok());
+        let guest_mem = GuestMemoryMmap::from_ranges(&[(GuestAddress(0x0), 0x1000)]).unwrap();
+        let mut vm = crate::builder::setup_kvm_vm(&guest_mem, false).unwrap();
+        crate::builder::setup_interrupt_controller(&mut vm).unwrap();
+        let serial = devices::legacy::Serial::new_sink(EventFd::new(libc::EFD_NONBLOCK).unwrap());
+        let mut ldm = PortIODeviceManager::new(
+            Arc::new(Mutex::new(serial)),
+            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+        )
+        .unwrap();
+        assert!(ldm.register_devices(vm.fd()).is_ok());
     }
 
     #[test]
@@ -139,10 +158,10 @@ mod tests {
             )
         );
         assert_eq!(
-            format!("{}", Error::EventFd(io::Error::from_raw_os_error(1))),
+            format!("{}", Error::EventFd(std::io::Error::from_raw_os_error(1))),
             format!(
                 "Failed to create EventFd: {}",
-                io::Error::from_raw_os_error(1)
+                std::io::Error::from_raw_os_error(1)
             )
         );
     }

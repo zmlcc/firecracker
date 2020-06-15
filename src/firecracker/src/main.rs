@@ -1,40 +1,38 @@
 // Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-extern crate backtrace;
-extern crate libc;
-
 extern crate api_server;
+extern crate libc;
 #[macro_use]
 extern crate logger;
 extern crate mmds;
+extern crate polly;
 extern crate seccomp;
+extern crate timerfd;
 extern crate utils;
 extern crate vmm;
 
-use backtrace::Backtrace;
+mod api_server_adapter;
+mod metrics;
 
 use std::fs;
 use std::io;
 use std::panic;
 use std::path::PathBuf;
 use std::process;
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
-use std::sync::{Arc, RwLock};
-use std::thread;
+use std::sync::{Arc, Mutex};
 
-use api_server::{ApiServer, Error, VmmRequest, VmmResponse};
 use logger::{Metric, LOGGER, METRICS};
-use mmds::MMDS;
-use seccomp::{BpfInstructionSlice, BpfProgram, SeccompLevel};
+use polly::event_manager::EventManager;
+use seccomp::{BpfProgram, SeccompLevel};
 use utils::arg_parser::{ArgParser, Argument};
-use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
 use utils::validators::validate_instance_id;
 use vmm::default_syscalls::get_seccomp_filter;
+use vmm::resources::VmResources;
 use vmm::signal_handler::register_signal_handlers;
-use vmm::vmm_config::instance_info::{InstanceInfo, InstanceState};
-use vmm::{EventLoopExitReason, Vmm};
+use vmm::vmm_config::instance_info::InstanceInfo;
+use vmm::vmm_config::logger::{init_logger, LoggerConfig, LoggerLevel};
 
 // The reason we place default API socket under /run is that API socket is a
 // runtime file.
@@ -45,7 +43,7 @@ const FIRECRACKER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
     LOGGER
-        .preinit(Some(DEFAULT_INSTANCE_ID.to_string()))
+        .configure(Some(DEFAULT_INSTANCE_ID.to_string()))
         .expect("Failed to register logger");
 
     if let Err(e) = register_signal_handlers() {
@@ -72,12 +70,10 @@ fn main() {
         }
 
         METRICS.vmm.panic_count.inc();
-        let bt = Backtrace::new();
-        error!("{:?}", bt);
 
-        // Log the metrics before aborting.
-        if let Err(e) = LOGGER.log_metrics() {
-            error!("Failed to log metrics while panicking: {}", e);
+        // Write the metrics before aborting.
+        if let Err(e) = METRICS.write() {
+            error!("Failed to write metrics while panicking: {}", e);
         }
     }));
 
@@ -99,21 +95,19 @@ fn main() {
                 .takes_value(true)
                 .default_value("2")
                 .help(
-                    "Level of seccomp filtering that will be passed to executed path as \
-                    argument.\n
-                        - Level 0: No filtering.\n
-                        - Level 1: Seccomp filtering by syscall number.\n
-                        - Level 2: Seccomp filtering by syscall number and argument values.\n
-                    ",
+                    "Level of seccomp filtering (0: no filter | 1: filter by syscall number | 2: filter by syscall \
+                     number and argument values) that will be passed to executed path as argument."
                 ),
         )
         .arg(
             Argument::new("start-time-us")
-                .takes_value(true),
+                .takes_value(true)
+                .help("Process start time (wall clock, microseconds)."),
         )
         .arg(
             Argument::new("start-time-cpu-us")
-                .takes_value(true),
+                .takes_value(true)
+                .help("Process start CPU time (wall clock, microseconds)."),
         )
         .arg(
             Argument::new("config-file")
@@ -125,6 +119,30 @@ fn main() {
                 .takes_value(false)
                 .requires("config-file")
                 .help("Optional parameter which allows starting and using a microVM without an active API socket.")
+        )
+        .arg(
+            Argument::new("log-path")
+                .takes_value(true)
+                .help("Path to a fifo or a file used for configuring the logger on startup.")
+        )
+        .arg(
+            Argument::new("level")
+                .takes_value(true)
+                .requires("log-path")
+                .default_value("Warning")
+                .help("Set the logger level.")
+        )
+        .arg(
+            Argument::new("show-level")
+                .takes_value(false)
+                .requires("log-path")
+                .help("Whether or not to output the level in the logs.")
+        )
+        .arg(
+            Argument::new("show-log-origin")
+                .takes_value(false)
+                .requires("log-path")
+                .help("Whether or not to include the file path and line number of the log's origin.")
         );
 
     let arguments = match arg_parser.parse_from_cmdline() {
@@ -156,14 +174,36 @@ fn main() {
         }
     };
 
-    let bind_path = arguments
-        .value_as_string("api-sock")
-        .map(PathBuf::from)
-        .expect("Missing argument: api_sock");
-
     // It's safe to unwrap here because the field's been provided with a default value.
     let instance_id = arguments.value_as_string("id").unwrap();
     validate_instance_id(instance_id.as_str()).expect("Invalid instance ID");
+
+    let instance_info = InstanceInfo {
+        id: instance_id.clone(),
+        started: false,
+        vmm_version: FIRECRACKER_VERSION.to_string(),
+        app_name: "Firecracker".to_string(),
+    };
+
+    LOGGER.set_instance_id(instance_id);
+
+    if let Some(log) = arguments.value_as_string("log-path") {
+        // It's safe to unwrap here because the field's been provided with a default value.
+        let level = arguments.value_as_string("level").unwrap();
+        let logger_level = LoggerLevel::from_string(level).unwrap_or_else(|err| {
+            panic!("Invalid value for logger level: {}. Possible values: [Error, Warning, Info, Debug]", err);
+        });
+        let show_level = arguments.value_as_bool("show-level").unwrap_or(false);
+        let show_log_origin = arguments.value_as_bool("show-log-origin").unwrap_or(false);
+
+        let logger_config = LoggerConfig::new(
+            PathBuf::from(log),
+            logger_level,
+            show_level,
+            show_log_origin,
+        );
+        init_logger(logger_config, &instance_info).expect("Could not initialize logger.");
+    }
 
     // It's safe to unwrap here because the field's been provided with a default value.
     let seccomp_level = arguments.value_as_string("seccomp-level").unwrap();
@@ -176,231 +216,102 @@ fn main() {
         panic!("Could not create seccomp filter: {}", err);
     });
 
-    let start_time_us = arguments.value_as_string("start-time-us").map(|s| {
-        s.parse::<u64>()
-            .expect("'start-time-us' parameter expected to be of 'u64' type.")
-    });
-
-    let start_time_cpu_us = arguments.value_as_string("start-time-cpu-us").map(|s| {
-        s.parse::<u64>()
-            .expect("'start-time-cpu_us' parameter expected to be of 'u64' type.")
-    });
-
     let vmm_config_json = arguments
         .value_as_string("config-file")
         .map(fs::read_to_string)
         .map(|x| x.expect("Unable to open or read from the configuration file"));
 
-    let no_api = arguments.value_as_bool("no-api").unwrap_or(false);
+    let api_enabled = !arguments.value_as_bool("no-api").unwrap_or(false);
 
-    let api_shared_info = Arc::new(RwLock::new(InstanceInfo {
-        state: InstanceState::Uninitialized,
-        id: instance_id.clone(),
-        vmm_version: FIRECRACKER_VERSION.to_string(),
-    }));
+    if api_enabled {
+        let bind_path = arguments
+            .value_as_string("api-sock")
+            .map(PathBuf::from)
+            .expect("Missing argument: api-sock");
 
-    let request_event_fd = EventFd::new(libc::EFD_NONBLOCK)
-        .map_err(Error::Eventfd)
-        .expect("Cannot create API Eventfd.");
-    let (to_vmm, from_api) = channel();
-    let (to_api, from_vmm) = channel();
+        let start_time_us = arguments.value_as_string("start-time-us").map(|s| {
+            s.parse::<u64>()
+                .expect("'start-time-us' parameter expected to be of 'u64' type.")
+        });
 
-    // Api enabled.
-    if !no_api {
-        // MMDS only supported with API.
-        let mmds_info = MMDS.clone();
-        let vmm_shared_info = api_shared_info.clone();
-        let to_vmm_event_fd = request_event_fd.try_clone().unwrap();
-        let api_server_filter = seccomp_filter.clone();
-
-        thread::Builder::new()
-            .name("fc_api".to_owned())
-            .spawn(move || {
-                match ApiServer::new(
-                    mmds_info,
-                    vmm_shared_info,
-                    to_vmm,
-                    from_vmm,
-                    to_vmm_event_fd,
-                )
-                .expect("Cannot create API server")
-                .bind_and_run(
-                    bind_path,
-                    start_time_us,
-                    start_time_cpu_us,
-                    api_server_filter,
-                ) {
-                    Ok(_) => (),
-                    Err(Error::Io(inner)) => match inner.kind() {
-                        io::ErrorKind::AddrInUse => {
-                            panic!("Failed to open the API socket: {:?}", Error::Io(inner))
-                        }
-                        _ => panic!(
-                            "Failed to communicate with the API socket: {:?}",
-                            Error::Io(inner)
-                        ),
-                    },
-                    Err(eventfd_err @ Error::Eventfd(_)) => {
-                        panic!("Failed to open the API socket: {:?}", eventfd_err)
-                    }
-                }
-            })
-            .expect("API thread spawn failed.");
+        let start_time_cpu_us = arguments.value_as_string("start-time-cpu-us").map(|s| {
+            s.parse::<u64>()
+                .expect("'start-time-cpu-us' parameter expected to be of 'u64' type.")
+        });
+        api_server_adapter::run_with_api(
+            seccomp_filter,
+            vmm_config_json,
+            bind_path,
+            instance_info,
+            start_time_us,
+            start_time_cpu_us,
+        );
+    } else {
+        run_without_api(seccomp_filter, vmm_config_json, &instance_info);
     }
-
-    start_vmm(
-        api_shared_info,
-        request_event_fd,
-        from_api,
-        to_api,
-        seccomp_filter,
-        vmm_config_json,
-    );
 }
 
-/// Creates and starts a vmm.
-///
-/// # Arguments
-///
-/// * `api_shared_info` - A parameter for storing information on the VMM (e.g the current state).
-/// * `api_event_fd` - An event fd used for receiving API associated events.
-/// * `from_api` - The receiver end point of the communication channel.
-/// * `seccomp_filter` - The seccomp filter used. Filters are loaded before executing
-///                     guest code. The caller is responsible for providing a correct filter.
-/// * `config_json` - Optional parameter that can be used to configure the guest machine without
-///                   using the API socket.
-fn start_vmm(
-    api_shared_info: Arc<RwLock<InstanceInfo>>,
-    api_event_fd: EventFd,
-    from_api: Receiver<VmmRequest>,
-    to_api: Sender<VmmResponse>,
+// Configure and start a microVM as described by the command-line JSON.
+fn build_microvm_from_json(
     seccomp_filter: BpfProgram,
-    config_json: Option<String>,
-) {
-    // If this fails, consider it fatal. Use expect().
-    let mut vmm = Vmm::new(api_shared_info, &api_event_fd).expect("Cannot create VMM");
-    let vmm_seccomp_filter = seccomp_filter.clone();
-    let vcpu_seccomp_filter = seccomp_filter.clone();
-
-    if let Some(json) = config_json {
-        vmm.configure_from_json(json).unwrap_or_else(|err| {
+    event_manager: &mut EventManager,
+    config_json: String,
+    instance_info: &InstanceInfo,
+) -> (VmResources, Arc<Mutex<vmm::Vmm>>) {
+    let vm_resources = VmResources::from_json(&config_json, instance_info).unwrap_or_else(|err| {
+        error!(
+            "Configuration for VMM from one single json failed: {:?}",
+            err
+        );
+        process::exit(i32::from(vmm::FC_EXIT_CODE_BAD_CONFIGURATION));
+    });
+    let vmm = vmm::builder::build_microvm_for_boot(&vm_resources, event_manager, &seccomp_filter)
+        .unwrap_or_else(|err| {
             error!(
-                "Setting configuration for VMM from one single json failed: {}",
+                "Building VMM configured from cmdline json failed: {:?}",
                 err
             );
             process::exit(i32::from(vmm::FC_EXIT_CODE_BAD_CONFIGURATION));
         });
-        vmm.start_microvm(vmm_seccomp_filter.clone(), vcpu_seccomp_filter.clone())
-            .unwrap_or_else(|err| {
-                error!(
-                    "Starting microvm that was configured from one single json failed: {}",
-                    err
-                );
-                process::exit(i32::from(vmm::FC_EXIT_CODE_UNEXPECTED_ERROR));
-            });
-        info!("Successfully started microvm that was configured from one single json");
-    }
+    info!("Successfully started microvm that was configured from one single json");
 
-    let exit_code = loop {
-        match vmm.run_event_loop() {
-            Err(e) => {
-                error!("Abruptly exited VMM control loop: {:?}", e);
-                break vmm::FC_EXIT_CODE_GENERIC_ERROR;
-            }
-            Ok(exit_reason) => match exit_reason {
-                EventLoopExitReason::Break => {
-                    info!("Gracefully terminated VMM control loop");
-                    break vmm::FC_EXIT_CODE_OK;
-                }
-                EventLoopExitReason::ControlAction => {
-                    if let Err(exit_code) = vmm_control_event(
-                        &mut vmm,
-                        &api_event_fd,
-                        &from_api,
-                        &to_api,
-                        &vmm_seccomp_filter[..],
-                        &vcpu_seccomp_filter[..],
-                    ) {
-                        break exit_code;
-                    }
-                }
-            },
-        };
-    };
-
-    vmm.stop(i32::from(exit_code));
+    (vm_resources, vmm)
 }
 
-/// Handles the control event.
-/// Receives and runs the Vmm action and sends back a response.
-/// Provides program exit codes on errors.
-fn vmm_control_event(
-    vmm: &mut Vmm,
-    api_event_fd: &EventFd,
-    from_api: &Receiver<VmmRequest>,
-    to_api: &Sender<VmmResponse>,
-    vmm_seccomp_filter: &BpfInstructionSlice,
-    vcpu_seccomp_filter: &BpfInstructionSlice,
-) -> Result<(), u8> {
-    api_event_fd.read().map_err(|e| {
-        error!("VMM: Failed to read the API event_fd: {}", e);
-        vmm::FC_EXIT_CODE_GENERIC_ERROR
-    })?;
+fn run_without_api(
+    seccomp_filter: BpfProgram,
+    config_json: Option<String>,
+    instance_info: &InstanceInfo,
+) {
+    let mut event_manager = EventManager::new().expect("Unable to create EventManager");
 
-    match from_api.try_recv() {
-        Ok(vmm_request) => {
-            use api_server::VmmAction::*;
-            let action_request = *vmm_request;
-            let response = match action_request {
-                ConfigureBootSource(boot_source_body) => vmm
-                    .configure_boot_source(boot_source_body)
-                    .map(|_| api_server::VmmData::Empty),
-                ConfigureLogger(logger_description) => vmm
-                    .init_logger(logger_description)
-                    .map(|_| api_server::VmmData::Empty),
-                FlushMetrics => vmm.flush_metrics().map(|_| api_server::VmmData::Empty),
-                GetVmConfiguration => Ok(api_server::VmmData::MachineConfiguration(
-                    vmm.vm_config().clone(),
-                )),
-                InsertBlockDevice(block_device_config) => vmm
-                    .insert_block_device(block_device_config)
-                    .map(|_| api_server::VmmData::Empty),
-                InsertNetworkDevice(netif_body) => vmm
-                    .insert_net_device(netif_body)
-                    .map(|_| api_server::VmmData::Empty),
-                SetVsockDevice(vsock_cfg) => vmm
-                    .set_vsock_device(vsock_cfg)
-                    .map(|_| api_server::VmmData::Empty),
-                StartMicroVm => vmm
-                    .start_microvm(
-                        vmm_seccomp_filter.to_owned(),
-                        vcpu_seccomp_filter.to_owned(),
-                    )
-                    .map(|_| api_server::VmmData::Empty),
-                #[cfg(target_arch = "x86_64")]
-                SendCtrlAltDel => vmm.send_ctrl_alt_del().map(|_| api_server::VmmData::Empty),
-                SetVmConfiguration(machine_config_body) => vmm
-                    .set_vm_configuration(machine_config_body)
-                    .map(|_| api_server::VmmData::Empty),
-                UpdateBlockDevicePath(drive_id, path_on_host) => vmm
-                    .set_block_device_path(drive_id, path_on_host)
-                    .map(|_| api_server::VmmData::Empty),
-                UpdateNetworkInterface(netif_update) => vmm
-                    .update_net_device(netif_update)
-                    .map(|_| api_server::VmmData::Empty),
-            };
-            // Run the requested action and send back the result.
-            to_api
-                .send(Box::new(response))
-                .map_err(|_| ())
-                .expect("one-shot channel closed");
-        }
-        Err(TryRecvError::Empty) => {
-            warn!("Got a spurious notification from api thread");
-        }
-        Err(TryRecvError::Disconnected) => {
-            panic!("The channel's sending half was disconnected. Cannot receive data.");
-        }
-    };
-    Ok(())
+    // Create the firecracker metrics object responsible for periodically printing metrics.
+    let firecracker_metrics = Arc::new(Mutex::new(metrics::PeriodicMetrics::new()));
+    event_manager
+        .add_subscriber(firecracker_metrics.clone())
+        .expect("Cannot register the metrics event to the event manager.");
+
+    // Build the microVm. We can ignore the returned values here because:
+    // - VmResources is not used without api,
+    // - An `Arc` reference of the built `Vmm` is plugged in the `EventManager` by the builder.
+    build_microvm_from_json(
+        seccomp_filter,
+        &mut event_manager,
+        // Safe to unwrap since '--no-api' requires this to be set.
+        config_json.unwrap(),
+        instance_info,
+    );
+
+    // Start the metrics.
+    firecracker_metrics
+        .lock()
+        .expect("Poisoned lock")
+        .start(metrics::WRITE_METRICS_PERIOD_MS);
+
+    // Run the EventManager that drives everything in the microVM.
+    loop {
+        event_manager
+            .run()
+            .expect("Failed to start the event manager");
+    }
 }

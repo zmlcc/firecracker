@@ -30,8 +30,9 @@ pub enum Error {
     CgroupInheritFromParent(PathBuf, String),
     CgroupLineNotFound(String, String),
     CgroupLineNotUnique(String, String),
-    ChangeFileOwner(&'static str, io::Error),
+    ChangeFileOwner(PathBuf, io::Error),
     ChdirNewRoot(io::Error),
+    Chmod(PathBuf, io::Error),
     CloseNetNsFd(io::Error),
     CloseDevNullFd(io::Error),
     Copy(PathBuf, PathBuf, io::Error),
@@ -82,6 +83,9 @@ impl fmt::Display for Error {
                 "{}",
                 format!("Failed to canonicalize path {:?}: {}", path, io_err).replace("\"", "")
             ),
+            Chmod(ref path, ref err) => {
+                write!(f, "Failed to change permissions on {:?}: {}", path, err)
+            }
             CgroupInheritFromParent(ref path, ref filename) => write!(
                 f,
                 "{}",
@@ -101,8 +105,8 @@ impl fmt::Display for Error {
                 "Found more than one cgroups configuration line in {} for {}",
                 proc_mounts, controller
             ),
-            ChangeFileOwner(ref filename, ref err) => {
-                write!(f, "Failed to change owner for {}: {}", filename, err)
+            ChangeFileOwner(ref path, ref err) => {
+                write!(f, "Failed to change owner for {:?}: {}", path, err)
             }
             ChdirNewRoot(ref err) => write!(f, "Failed to chdir into chroot directory: {}", err),
             CloseNetNsFd(ref err) => write!(f, "Failed to close netns fd: {}", err),
@@ -353,7 +357,7 @@ fn main() {
 mod tests {
     use super::*;
     use std::fs::File;
-    use std::os::unix::io::AsRawFd;
+    use std::os::unix::io::IntoRawFd;
 
     use utils::arg_parser;
 
@@ -368,7 +372,7 @@ mod tests {
         for i in 0..n {
             let maybe_file = File::create(format!("{}/{}", tmp_dir_path, i));
             assert!(maybe_file.is_ok());
-            fds.push(maybe_file.unwrap().as_raw_fd());
+            fds.push(maybe_file.unwrap().into_raw_fd());
         }
 
         sanitize_process();
@@ -417,6 +421,13 @@ mod tests {
         assert_eq!(
             format!(
                 "{}",
+                Error::Chmod(path.clone(), io::Error::from_raw_os_error(2))
+            ),
+            "Failed to change permissions on \"/foo\": No such file or directory (os error 2)",
+        );
+        assert_eq!(
+            format!(
+                "{}",
                 Error::CgroupLineNotFound(proc_mounts.to_string(), controller.to_string())
             ),
             "sysfs configurations not found in /proc/mounts",
@@ -429,16 +440,15 @@ mod tests {
             "Found more than one cgroups configuration line in /proc/mounts for sysfs",
         );
 
-        let folder_cstr = CStr::from_bytes_with_nul(b"/dev/net/tun\0").unwrap();
         assert_eq!(
             format!(
                 "{}",
                 Error::ChangeFileOwner(
-                    folder_cstr.to_str().unwrap(),
+                    PathBuf::from("/dev/net/tun"),
                     io::Error::from_raw_os_error(42)
                 )
             ),
-            "Failed to change owner for /dev/net/tun: No message of desired type (os error 42)",
+            "Failed to change owner for \"/dev/net/tun\": No message of desired type (os error 42)",
         );
         assert_eq!(
             format!("{}", Error::ChdirNewRoot(io::Error::from_raw_os_error(42))),
@@ -469,7 +479,7 @@ mod tests {
         assert_eq!(
             format!(
                 "{}",
-                Error::CreateDir(path.clone(), io::Error::from_raw_os_error(2))
+                Error::CreateDir(path, io::Error::from_raw_os_error(2))
             ),
             format!("Failed to create directory /foo: {}", err2_str)
         );
@@ -633,6 +643,18 @@ mod tests {
                 Error::Write(file_path, io::Error::from_raw_os_error(2))
             ),
             format!("Failed to write to /foo/bar: {}", err2_str),
+        );
+    }
+
+    #[test]
+    fn test_to_cstring() {
+        let path = Path::new("some_path");
+        let cstring_path = to_cstring(path).unwrap();
+        assert_eq!(cstring_path, CString::new("some_path").unwrap());
+        let path_with_nul = Path::new("some_path\0");
+        assert_eq!(
+            format!("{}", to_cstring(path_with_nul).unwrap_err()),
+            "Encountered interior \\0 while parsing a string"
         );
     }
 }

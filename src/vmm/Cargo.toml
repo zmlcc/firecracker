@@ -4,28 +4,32 @@ version = "0.1.0"
 authors = ["Amazon Firecracker team <firecracker-devel@amazon.com>"]
 
 [dependencies]
-kvm-bindings = { version = ">=0.2", features = ["fam-wrappers"] }
-kvm-ioctls = ">=0.4"
+kvm-bindings = { git = "https://github.com/firecracker-microvm/kvm-bindings", tag = "v0.2.0-1", features = ["fam-wrappers"] }
+kvm-ioctls = { git = "https://github.com/firecracker-microvm/kvm-ioctls", tag = "v0.5.0-1" }
+lazy_static = "1.4.0"
 libc = ">=0.2.39"
-epoll = ">=4.0.1"
 serde = ">=1.0.27"
 serde_derive = ">=1.0.27"
 serde_json = ">=1.0.9"
-timerfd = ">=1.0"
+sysconf = "0.3.4"
+versionize = { git = "https://github.com/firecracker-microvm/versionize", tag = "v0.1.0" }
+versionize_derive = { git = "https://github.com/firecracker-microvm/versionize_derive", tag = "v0.1.0" }
 
 arch = { path = "../arch" }
 devices = { path = "../devices" }
 dumbo = { path = "../dumbo" }
 kernel = { path = "../kernel" }
 logger = { path = "../logger" }
-vm-memory = { path = "../vm-memory" }
+vm-memory = { version = ">=0.2.0", features = ["backend-mmap"] }
 mmds = { path = "../mmds" }
 utils = { path = "../utils"}
 rate_limiter = { path = "../rate_limiter" }
 seccomp = { path = "../seccomp" }
+polly = { path = "../polly" }
+snapshot = { path = "../snapshot"}
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 cpuid = { path = "../cpuid" }
 
 [dev-dependencies]
-libc = ">=0.2.39"
+vmm-sys-util = ">=0.4.0"

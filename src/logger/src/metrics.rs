@@ -3,30 +3,183 @@
 
 //! Defines the metrics system.
 //!
+//! # Metrics format
+//! The metrics are flushed in JSON format each 60 seconds. The first field will always be the
+//! timestamp followed by the JSON representation of the structures representing each component on
+//! which we are capturing specific metrics.
+//!
+//! ## JSON example with metrics:
+//! ```bash
+//! {
+//!  "utc_timestamp_ms": 1541591155180,
+//!  "api_server": {
+//!    "process_startup_time_us": 0,
+//!    "process_startup_time_cpu_us": 0
+//!  },
+//!  "block": {
+//!    "activate_fails": 0,
+//!    "cfg_fails": 0,
+//!    "event_fails": 0,
+//!    "flush_count": 0,
+//!    "queue_event_count": 0,
+//!    "read_count": 0,
+//!    "write_count": 0
+//!  }
+//! }
+//! ```
+//! The example above means that inside the structure representing all the metrics there is a field
+//! named `block` which is in turn a serializable child structure collecting metrics for
+//! the block device such as `activate_fails`, `cfg_fails`, etc.
+//!
+//! # Limitations
+//! Metrics are only written to buffers.
+//!
 //! # Design
 //! The main design goals of this system are:
 //! * Use lockless operations, preferably ones that don't require anything other than
 //!   simple reads/writes being atomic.
 //! * Exploit interior mutability and atomics being Sync to allow all methods (including the ones
 //!   which are effectively mutable) to be callable on a global non-mut static.
-//! * Rely on `serde` to provide the actual serialization for logging the metrics.
+//! * Rely on `serde` to provide the actual serialization for writing the metrics.
 //! * Since all metrics start at 0, we implement the `Default` trait via derive for all of them,
 //!   to avoid having to initialize everything by hand.
 //!
-//! Moreover, the value of a metric is currently NOT reset to 0 each time it's being logged. The
+//! Moreover, the value of a metric is currently NOT reset to 0 each time it's being written. The
 //! current approach is to store two values (current and previous) and compute the delta between
 //! them each time we do a flush (i.e by serialization). There are a number of advantages
 //! to this approach, including:
 //! * We don't have to introduce an additional write (to reset the value) from the thread which
-//!   does to actual logging, so less synchronization effort is required.
-//! * We don't have to worry at all that much about losing some data if logging fails for a while
+//!   does to actual writing, so less synchronization effort is required.
+//! * We don't have to worry at all that much about losing some data if writing fails for a while
 //!   (this could be a concern, I guess).
 //! If if turns out this approach is not really what we want, it's pretty easy to resort to
 //! something else, while working behind the same interface.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std;
+use std::fmt;
+use std::io::Write;
+use std::ops::Deref;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use serde::{Serialize, Serializer};
+
+use super::extract_guard;
+
+lazy_static! {
+    /// Static instance used for handling metrics.
+    pub static ref METRICS: Metrics<FirecrackerMetrics> = Metrics::new(FirecrackerMetrics::default());
+}
+
+/// Metrics system.
+// All member fields have types which are Sync, and exhibit interior mutability, so
+// we can call operations on metrics using a non-mut static global variable.
+pub struct Metrics<T: Serialize> {
+    // Metrics will get flushed here.
+    metrics_buf: Mutex<Option<Box<dyn Write + Send>>>,
+    is_initialized: AtomicBool,
+    pub app_metrics: T,
+}
+
+impl<T: Serialize> Metrics<T> {
+    /// Creates a new instance of the current metrics.
+    // TODO: We need a better name than app_metrics (something that says that these are the actual
+    // values that we are writing to the metrics_buf).
+    pub fn new(app_metrics: T) -> Metrics<T> {
+        Metrics {
+            metrics_buf: Mutex::new(None),
+            is_initialized: AtomicBool::new(false),
+            app_metrics,
+        }
+    }
+
+    /// Initialize metrics system (once and only once).
+    /// Every call made after the first will have no effect besides returning `Ok` or `Err`.
+    ///
+    /// # Arguments
+    ///
+    /// * `metrics_dest` - Buffer for JSON formatted metrics. Needs to implement `Write` and `Send`.
+    pub fn init(&self, metrics_dest: Box<dyn Write + Send>) -> Result<(), MetricsError> {
+        if self.is_initialized.load(Ordering::Relaxed) {
+            return Err(MetricsError::AlreadyInitialized);
+        }
+        {
+            let mut g = extract_guard(self.metrics_buf.lock());
+
+            *g = Some(metrics_dest);
+        }
+        self.is_initialized.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Writes metrics to the destination provided as argument upon initialization of the metrics.
+    /// Upon failure, an error is returned if metrics system is initialized and metrics could not be
+    /// written.
+    /// Upon success, the function will return `True` (if metrics system was initialized and metrics
+    /// were successfully written to disk) or `False` (if metrics system was not yet initialized).
+    pub fn write(&self) -> Result<bool, MetricsError> {
+        if self.is_initialized.load(Ordering::Relaxed) {
+            match serde_json::to_string(&self.app_metrics) {
+                Ok(msg) => {
+                    if let Some(guard) = extract_guard(self.metrics_buf.lock()).as_mut() {
+                        // No need to explicitly call flush because the underlying LineWriter flushes
+                        // automatically whenever a newline is detected (and we always end with a
+                        // newline the current write).
+                        return guard
+                            .write_all(&(format!("{}\n", msg)).as_bytes())
+                            .map_err(MetricsError::Write)
+                            .map(|_| true);
+                    } else {
+                        // We have not incremented `missed_metrics_count` as there is no way to push metrics
+                        // if destination lock got poisoned.
+                        panic!("Failed to write to the provided metrics destination due to poisoned lock");
+                    }
+                }
+                Err(e) => {
+                    return Err(MetricsError::Serde(e.to_string()));
+                }
+            }
+        }
+        // If the metrics are not initialized, no error is thrown but we do let the user know that
+        // metrics were not written.
+        Ok(false)
+    }
+}
+
+impl<T: Serialize> Deref for Metrics<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.app_metrics
+    }
+}
+
+/// Describes the errors which may occur while handling metrics scenarios.
+#[derive(Debug)]
+pub enum MetricsError {
+    /// First attempt at initialization failed.
+    NeverInitialized(String),
+    /// The metrics system does not allow reinitialization.
+    AlreadyInitialized,
+    /// Error in the serialization of metrics instance.
+    Serde(String),
+    /// Writing the specified buffer failed.
+    Write(std::io::Error),
+}
+
+impl fmt::Display for MetricsError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let printable = match *self {
+            MetricsError::NeverInitialized(ref e) => e.to_string(),
+            MetricsError::AlreadyInitialized => {
+                "Reinitialization of metrics not allowed.".to_string()
+            }
+            MetricsError::Serde(ref e) => e.to_string(),
+            MetricsError::Write(ref e) => format!("Failed to write metrics. Error: {}", e),
+        };
+        write!(f, "{}", printable)
+    }
+}
 
 /// Used for defining new types of metrics that can be either incremented with an unit
 /// or an arbitrary amount of units.
@@ -47,7 +200,7 @@ pub trait Metric {
 /// synchronization is necessary.
 // It's currently used for vCPU metrics. An alternative here would be
 // to have one instance of every metric for each thread, and to
-// aggregate them when logging. However this probably overkill unless we have a lot of vCPUs
+// aggregate them when writing. However this probably overkill unless we have a lot of vCPUs
 // incrementing metrics very often. Still, it's there if we ever need it :-s
 #[derive(Default)]
 // We will be keeping two values for each metric for being able to reset
@@ -139,6 +292,10 @@ pub struct PutRequestsMetrics {
     pub machine_cfg_count: SharedMetric,
     /// Number of failures in configuring the machine.
     pub machine_cfg_fails: SharedMetric,
+    /// Number of PUTs for initializing the metrics system.
+    pub metrics_count: SharedMetric,
+    /// Number of failures in initializing the metrics system.
+    pub metrics_fails: SharedMetric,
     /// Number of PUTs for creating a new network interface.
     pub network_count: SharedMetric,
     /// Number of failures in creating a new network interface.
@@ -169,6 +326,8 @@ pub struct BlockDeviceMetrics {
     pub activate_fails: SharedMetric,
     /// Number of times when interacting with the space config of a block device failed.
     pub cfg_fails: SharedMetric,
+    /// No available buffer for the block queue.
+    pub no_avail_buffer: SharedMetric,
     /// Number of times when handling events on a block device failed.
     pub event_fails: SharedMetric,
     /// Number of failures in executing a request on a block device.
@@ -259,6 +418,10 @@ pub struct NetDeviceMetrics {
     pub activate_fails: SharedMetric,
     /// Number of times when interacting with the space config of a network device failed.
     pub cfg_fails: SharedMetric,
+    /// No available buffer for the net device rx queue.
+    pub no_rx_avail_buffer: SharedMetric,
+    /// No available buffer for the net device tx queue.
+    pub no_tx_avail_buffer: SharedMetric,
     /// Number of times when handling events on a network device failed.
     pub event_fails: SharedMetric,
     /// Number of events associated with the receiving queue.
@@ -361,6 +524,51 @@ pub struct SignalMetrics {
     pub sigsegv: SharedMetric,
 }
 
+/// Vsock-related metrics.
+#[derive(Default, Serialize)]
+pub struct VsockDeviceMetrics {
+    /// Number of times when activate failed on a vsock device.
+    pub activate_fails: SharedMetric,
+    /// Number of times when interacting with the space config of a vsock device failed.
+    pub cfg_fails: SharedMetric,
+    /// Number of times when handling RX queue events on a vsock device failed.
+    pub rx_queue_event_fails: SharedMetric,
+    /// Number of times when handling TX queue events on a vsock device failed.
+    pub tx_queue_event_fails: SharedMetric,
+    /// Number of times when handling event queue events on a vsock device failed.
+    pub ev_queue_event_fails: SharedMetric,
+    /// Number of times when handling muxer events on a vsock device failed.
+    pub muxer_event_fails: SharedMetric,
+    /// Number of times when handling connection events on a vsock device failed.
+    pub conn_event_fails: SharedMetric,
+    /// Number of events associated with the receiving queue.
+    pub rx_queue_event_count: SharedMetric,
+    /// Number of events associated with the transmitting queue.
+    pub tx_queue_event_count: SharedMetric,
+    /// Number of bytes received.
+    pub rx_bytes_count: SharedMetric,
+    /// Number of transmitted bytes.
+    pub tx_bytes_count: SharedMetric,
+    /// Number of packets received.
+    pub rx_packets_count: SharedMetric,
+    /// Number of transmitted packets.
+    pub tx_packets_count: SharedMetric,
+    /// Number of added connections.
+    pub conns_added: SharedMetric,
+    /// Number of killed connections.
+    pub conns_killed: SharedMetric,
+    /// Number of removed connections.
+    pub conns_removed: SharedMetric,
+    /// How many times the killq has been resynced.
+    pub killq_resync: SharedMetric,
+    /// How many flush fails have been seen.
+    pub tx_flush_fails: SharedMetric,
+    /// How many write fails have been seen.
+    pub tx_write_fails: SharedMetric,
+    /// Number of times read() has failed.
+    pub rx_read_fails: SharedMetric,
+}
+
 // The sole purpose of this struct is to produce an UTC timestamp when an instance is serialized.
 #[derive(Default)]
 struct SerializeToUtcTimestampMs;
@@ -383,7 +591,7 @@ pub struct FirecrackerMetrics {
     pub block: BlockDeviceMetrics,
     /// Metrics related to API GET requests.
     pub get_api_requests: GetRequestsMetrics,
-    /// Metrics relaetd to the i8042 device.
+    /// Metrics related to the i8042 device.
     pub i8042: I8042DeviceMetrics,
     /// Logging related metrics.
     pub logger: LoggerSystemMetrics,
@@ -407,12 +615,8 @@ pub struct FirecrackerMetrics {
     pub uart: SerialDeviceMetrics,
     /// Metrics related to signals.
     pub signals: SignalMetrics,
-}
-
-lazy_static! {
-    /// Static instance used for handling metrics.
-    ///
-    pub static ref METRICS: FirecrackerMetrics = FirecrackerMetrics::default();
+    /// Metrics related to virtio-vsockets.
+    pub vsock: VsockDeviceMetrics,
 }
 
 #[cfg(test)]
@@ -420,8 +624,29 @@ mod tests {
     extern crate serde_json;
     use super::*;
 
+    use std::io::ErrorKind;
     use std::sync::Arc;
     use std::thread;
+
+    use utils::tempfile::TempFile;
+
+    #[test]
+    fn test_init() {
+        let m = METRICS.deref();
+
+        // Trying to write metrics, when metrics system is not initialized, should not throw error.
+        let res = m.write();
+        assert!(res.is_ok() && !res.unwrap());
+
+        let f = TempFile::new().expect("Failed to create temporary metrics file");
+        assert!(m.init(Box::new(f.into_file()),).is_ok());
+
+        assert!(m.write().is_ok());
+
+        let f = TempFile::new().expect("Failed to create temporary metrics file");
+
+        assert!(m.init(Box::new(f.into_file()),).is_err());
+    }
 
     #[test]
     fn test_metric() {
@@ -463,5 +688,34 @@ mod tests {
     fn test_serialize() {
         let s = serde_json::to_string(&FirecrackerMetrics::default());
         assert!(s.is_ok());
+    }
+
+    #[test]
+    fn test_error_messages() {
+        assert_eq!(
+            format!(
+                "{}",
+                MetricsError::NeverInitialized(String::from("Bad Metrics Path Provided"))
+            ),
+            "Bad Metrics Path Provided"
+        );
+        assert_eq!(
+            format!("{}", MetricsError::AlreadyInitialized),
+            "Reinitialization of metrics not allowed."
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                MetricsError::Write(std::io::Error::new(ErrorKind::Interrupted, "write"))
+            ),
+            "Failed to write metrics. Error: write"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                MetricsError::Serde("Failed to serialize the given data structure.".to_string())
+            ),
+            "Failed to serialize the given data structure."
+        );
     }
 }

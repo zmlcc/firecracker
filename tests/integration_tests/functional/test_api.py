@@ -100,13 +100,15 @@ def test_api_put_update_pre_boot(test_microvm_with_api):
         'vcpu_count': 4,
         'ht_enabled': True,
         'mem_size_mib': 256,
-        'cpu_template': 'C3'
+        'cpu_template': 'C3',
+        'track_dirty_pages': True
     }
     response = test_microvm.machine_cfg.put(
         vcpu_count=microvm_config_json['vcpu_count'],
         ht_enabled=microvm_config_json['ht_enabled'],
         mem_size_mib=microvm_config_json['mem_size_mib'],
-        cpu_template=microvm_config_json['cpu_template']
+        cpu_template=microvm_config_json['cpu_template'],
+        track_dirty_pages=microvm_config_json['track_dirty_pages']
     )
     assert test_microvm.api_session.is_status_no_content(response.status_code)
 
@@ -125,6 +127,9 @@ def test_api_put_update_pre_boot(test_microvm_with_api):
 
     cpu_template = str(microvm_config_json['cpu_template'])
     assert response_json['cpu_template'] == cpu_template
+
+    track_dirty_pages = microvm_config_json['track_dirty_pages']
+    assert response_json['track_dirty_pages'] == track_dirty_pages
 
 
 def test_net_api_put_update_pre_boot(test_microvm_with_api):
@@ -178,8 +183,8 @@ def test_net_api_put_update_pre_boot(test_microvm_with_api):
         guest_mac='06:00:00:00:00:01'
     )
     assert test_microvm.api_session.is_status_bad_request(response.status_code)
-    assert "The host device name {} is already in use.".\
-        format(second_if_name) in response.text
+    assert "Could not create Network Device" \
+        in response.text
 
     # Updates to a network interface with an available name are allowed.
     iface_id = '1'
@@ -245,6 +250,9 @@ def test_api_put_update_post_boot(test_microvm_with_api):
 
     test_microvm.start()
 
+    expected_err = "The requested operation is not supported " \
+                   "after starting the microVM"
+
     # Valid updates to `kernel_image_path` are not allowed after boot.
     response = test_microvm.boot.put(
         kernel_image_path=test_microvm.get_jailed_resource(
@@ -252,14 +260,14 @@ def test_api_put_update_post_boot(test_microvm_with_api):
         )
     )
     assert test_microvm.api_session.is_status_bad_request(response.status_code)
-    assert "The update operation is not allowed after boot" in response.text
+    assert expected_err in response.text
 
     # Valid updates to the machine configuration are not allowed after boot.
     response = test_microvm.machine_cfg.patch(
         vcpu_count=4
     )
     assert test_microvm.api_session.is_status_bad_request(response.status_code)
-    assert "The update operation is not allowed after boot" in response.text
+    assert expected_err in response.text
 
     response = test_microvm.machine_cfg.put(
         vcpu_count=4,
@@ -267,7 +275,7 @@ def test_api_put_update_post_boot(test_microvm_with_api):
         mem_size_mib=128
     )
     assert test_microvm.api_session.is_status_bad_request(response.status_code)
-    assert "The update operation is not allowed after boot" in response.text
+    assert expected_err in response.text
 
     # Network interface update is not allowed after boot.
     response = test_microvm.network.put(
@@ -276,7 +284,7 @@ def test_api_put_update_post_boot(test_microvm_with_api):
         guest_mac='06:00:00:00:00:02'
     )
     assert test_microvm.api_session.is_status_bad_request(response.status_code)
-    assert "The update operation is not allowed after boot" in response.text
+    assert expected_err in response.text
 
     # Block device update is not allowed after boot.
     response = test_microvm.drive.put(
@@ -286,7 +294,7 @@ def test_api_put_update_post_boot(test_microvm_with_api):
         is_root_device=True
     )
     assert test_microvm.api_session.is_status_bad_request(response.status_code)
-    assert "The update operation is not allowed after boot" in response.text
+    assert expected_err in response.text
 
 
 def test_rate_limiters_api_config(test_microvm_with_api):
@@ -437,30 +445,28 @@ def test_api_patch_pre_boot(test_microvm_with_api):
     test_microvm = test_microvm_with_api
     test_microvm.spawn()
 
-    # Sets up the microVM with 2 vCPUs, 256 MiB of RAM, 1 network iface, a
-    # root file system with the rw permission and logging enabled.
+    # Sets up the microVM with 2 vCPUs, 256 MiB of RAM, 1 network interface
+    # and a root file system with the rw permission.
     test_microvm.basic_config()
 
     fs1 = drive_tools.FilesystemFile(
         os.path.join(test_microvm.fsfiles, 'scratch')
     )
+    drive_id = 'scratch'
     response = test_microvm.drive.put(
-        drive_id='scratch',
+        drive_id=drive_id,
         path_on_host=test_microvm.create_jailed_resource(fs1.path),
         is_root_device=False,
         is_read_only=False
     )
     assert test_microvm.api_session.is_status_no_content(response.status_code)
 
-    # Configure logging.
-    log_fifo_path = os.path.join(test_microvm.path, 'log_fifo')
+    # Configure metrics.
     metrics_fifo_path = os.path.join(test_microvm.path, 'metrics_fifo')
-    log_fifo = log_tools.Fifo(log_fifo_path)
     metrics_fifo = log_tools.Fifo(metrics_fifo_path)
 
-    response = test_microvm.logger.put(
-        log_fifo=test_microvm.create_jailed_resource(log_fifo.path),
-        metrics_fifo=test_microvm.create_jailed_resource(metrics_fifo.path)
+    response = test_microvm.metrics.put(
+        metrics_path=test_microvm.create_jailed_resource(metrics_fifo.path)
     )
     assert test_microvm.api_session.is_status_no_content(response.status_code)
 
@@ -492,6 +498,23 @@ def test_api_patch_pre_boot(test_microvm_with_api):
     assert test_microvm.api_session.is_status_bad_request(response.status_code)
     assert "Invalid request method" in response.text
 
+    # Patching drive before boot is not allowed.
+    response = test_microvm.drive.patch(
+        drive_id=drive_id,
+        path_on_host='foo.bar'
+    )
+    assert test_microvm.api_session.is_status_bad_request(response.status_code)
+    assert "The requested operation is not supported before starting the " \
+           "microVM." in response.text
+
+    # Patching net before boot is not allowed.
+    response = test_microvm.network.patch(
+        iface_id=iface_id
+    )
+    assert test_microvm.api_session.is_status_bad_request(response.status_code)
+    assert "The requested operation is not supported before starting the " \
+           "microVM." in response.text
+
 
 def test_api_patch_post_boot(test_microvm_with_api):
     """Test PATCH updates after the microvm boots."""
@@ -513,15 +536,12 @@ def test_api_patch_post_boot(test_microvm_with_api):
     )
     assert test_microvm.api_session.is_status_no_content(response.status_code)
 
-    # Configure logging.
-    log_fifo_path = os.path.join(test_microvm.path, 'log_fifo')
+    # Configure metrics.
     metrics_fifo_path = os.path.join(test_microvm.path, 'metrics_fifo')
-    log_fifo = log_tools.Fifo(log_fifo_path)
     metrics_fifo = log_tools.Fifo(metrics_fifo_path)
 
-    response = test_microvm.logger.put(
-        log_fifo=test_microvm.create_jailed_resource(log_fifo.path),
-        metrics_fifo=test_microvm.create_jailed_resource(metrics_fifo.path)
+    response = test_microvm.metrics.put(
+        metrics_path=test_microvm.create_jailed_resource(metrics_fifo.path)
     )
     assert test_microvm.api_session.is_status_no_content(response.status_code)
 
@@ -545,9 +565,11 @@ def test_api_patch_post_boot(test_microvm_with_api):
     assert "Invalid request method" in response.text
 
     # Partial updates to the machine configuration are not allowed after boot.
+    expected_err = "The requested operation is not supported " \
+                   "after starting the microVM"
     response = test_microvm.machine_cfg.patch(vcpu_count=4)
     assert test_microvm.api_session.is_status_bad_request(response.status_code)
-    assert "The update operation is not allowed after boot." in response.text
+    assert expected_err in response.text
 
     # Partial updates to the logger configuration are not allowed.
     response = test_microvm.logger.patch(level='Error')
@@ -576,7 +598,14 @@ def test_drive_patch(test_microvm_with_api):
     )
     assert test_microvm.api_session.is_status_no_content(response.status_code)
 
-    _drive_patch(test_microvm)
+    # Patching drive before boot is not allowed.
+    response = test_microvm.drive.patch(
+        drive_id='scratch',
+        path_on_host='foo.bar'
+    )
+    assert test_microvm.api_session.is_status_bad_request(response.status_code)
+    assert "The requested operation is not supported before starting the " \
+        "microVM." in response.text
 
     test_microvm.start()
 
@@ -662,7 +691,7 @@ def _drive_patch(test_microvm):
         path_on_host='foo.bar'
     )
     assert test_microvm.api_session.is_status_bad_request(response.status_code)
-    assert "Cannot open block device. Invalid permission/path." \
+    assert "Cannot open block device. Invalid permission/path" \
            in response.text
 
     fs = drive_tools.FilesystemFile(

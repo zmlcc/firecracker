@@ -478,6 +478,8 @@ struct sock_fprog {
 
 /// Program made up of a sequence of BPF instructions.
 pub type BpfProgram = Vec<sock_filter>;
+/// Reference to program made up of a sequence of BPF instructions.
+pub type BpfProgramRef<'a> = &'a [sock_filter];
 /// Slice of BPF instructions.
 pub type BpfInstructionSlice = [sock_filter];
 
@@ -1157,7 +1159,7 @@ impl Display for SeccompError {
 
 /// Possible values for seccomp level.
 #[repr(u8)]
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SeccompLevel {
     /// Seccomp filtering disabled.
     None = 0,
@@ -1276,7 +1278,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, 0);
             },
@@ -1301,7 +1303,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, 0, 0);
             },
@@ -1330,7 +1332,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, (KVM_GET_PIT2 - 1) as IoctlRequest);
             },
@@ -1356,7 +1358,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, 0 as IoctlRequest, 1);
             },
@@ -1384,7 +1386,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, KVM_GET_PIT2 as IoctlRequest);
             },
@@ -1415,7 +1417,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, 0 as IoctlRequest, u64::from(std::u32::MAX) + 10);
             },
@@ -1444,7 +1446,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, (KVM_GET_PIT2 + 1) as IoctlRequest);
             },
@@ -1476,7 +1478,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, 0 as IoctlRequest, u64::from(std::u32::MAX) + 11);
             },
@@ -1504,7 +1506,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, KVM_GET_PIT2 as IoctlRequest);
             },
@@ -1535,7 +1537,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, 0 as IoctlRequest, u64::from(std::u32::MAX) + 10);
             },
@@ -1570,7 +1572,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, KVM_GET_PIT2_LSB as IoctlRequest);
             },
@@ -1602,7 +1604,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, 0 as IoctlRequest, 0);
             },
@@ -1630,7 +1632,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, KVM_GET_PIT2 as IoctlRequest);
             },
@@ -1655,7 +1657,7 @@ mod tests {
         );
         // check syscalls that are not supposed to work
         validate_seccomp_filter(
-            rules.clone(),
+            rules,
             || unsafe {
                 libc::ioctl(0, 0 as IoctlRequest, std::u64::MAX);
             },
@@ -1793,7 +1795,7 @@ mod tests {
                 allow_syscall_if(
                     9,
                     vec![SeccompRule::new(
-                        vec![Cond::new(1, arg_len.clone(), MaskedEq(0b100), 36).unwrap()],
+                        vec![Cond::new(1, arg_len, MaskedEq(0b100), 36).unwrap()],
                         SeccompAction::Allow,
                     )],
                 ),

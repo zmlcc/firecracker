@@ -73,7 +73,7 @@
 # Development container image (name:tag)
 # This should be updated whenever we upgrade the development container.
 # (Yet another step on our way to reproducible builds.)
-DEVCTR_IMAGE="fcuvm/dev:v14"
+DEVCTR_IMAGE="fcuvm/dev:v16"
 
 # Naming things is hard
 MY_NAME="Firecracker $(basename "$0")"
@@ -174,14 +174,17 @@ ok_or_die() {
 # Upon returning from this call, the caller can be certain Docker is available.
 #
 ensure_docker() {
-    which docker > /dev/null 2>&1
+    NEWLINE=$'\n'
+    output=$(which docker 2>&1)
     ok_or_die "Docker not found. Aborting." \
         "Please make sure you have Docker (http://docker.com) installed" \
-        "and properly configured."
+        "and properly configured.${NEWLINE}" \
+        "Error: $?, command output: ${output}"
 
-    docker ps > /dev/null 2>&1
+    output=$(docker ps 2>&1)
     ok_or_die "Error accessing Docker. Please make sure the Docker daemon" \
-        "is running and that you are part of the docker group." \
+        "is running and that you are part of the docker group.${NEWLINE}" \
+        "Error: $?, command output: ${output}${NEWLINE}" \
         "For more information, see" \
         "https://docs.docker.com/install/linux/linux-postinstall/"
 }
@@ -236,7 +239,7 @@ ensure_build_dir() {
 # owned by root. This fixes that by recursively changing the ownership of build/
 # to the current user.
 #
-fix_build_dir_perms() {
+cmd_fix_perms() {
     # Yes, running Docker to get elevated privileges, just to chown some files
     # is a dirty hack.
     run_devctr \
@@ -412,6 +415,8 @@ cmd_help() {
     echo ""
     echo "    checkenv"
     echo "        Performs prerequisites checks needed to execute firecracker."
+    echo "    fix_perms"
+    echo "        Fixes permissions when devtool dies in the middle of a privileged session."
     echo ""
 }
 
@@ -475,13 +480,9 @@ cmd_build() {
     # Run the cargo build process inside the container.
     # We don't need any special privileges for the build phase, so we run the
     # container as the current user/group.
-    #
-    # Note: we need to pass an explicit TARGET_CC to cargo, because the `cc`
-    # crate gets confused for aarch64 musl.
     run_devctr \
         --user "$(id -u):$(id -g)" \
         --workdir "$CTR_FC_ROOT_DIR" \
-        --env TARGET_CC=musl-gcc \
         -- \
         cargo build \
             --target-dir "$CTR_CARGO_TARGET_DIR" \
@@ -523,6 +524,7 @@ cmd_test() {
 
 
     # If we got to here, we've got all we need to continue.
+    say "$(date -u +'%F %H:%M:%S %Z')"
     say "Starting test run ..."
 
     # Testing (running Firecracker via the jailer) needs root access,
@@ -533,6 +535,7 @@ cmd_test() {
         --privileged \
         --security-opt seccomp=unconfined \
         --ulimit core=0 \
+        --ulimit nofile=4096:4096 \
         --workdir "$CTR_FC_ROOT_DIR/tests" \
         -- \
         pytest "$@"
@@ -541,7 +544,7 @@ cmd_test() {
 
     # Running as root would have created some root-owned files under the build
     # dir. Let's fix that.
-    fix_build_dir_perms
+    cmd_fix_perms
 
     return $ret
 }
@@ -579,6 +582,7 @@ cmd_shell() {
             "$CTR_FC_ROOT_DIR will be owned by root."
         run_devctr \
             --privileged \
+            --ulimit nofile=4096:4096 \
             --security-opt seccomp=unconfined \
             --workdir "$CTR_FC_ROOT_DIR" \
             -- \
@@ -588,7 +592,7 @@ cmd_shell() {
         # Running as root may have created some root-owned files under the build
         # dir. Let's fix that.
         #
-        fix_build_dir_perms
+        cmd_fix_perms
     else
         say "Dropping to shell prompt as user $(whoami) ..."
         say "Note: $FC_ROOT_DIR is bind-mounted under $CTR_FC_ROOT_DIR"
@@ -602,6 +606,7 @@ cmd_shell() {
 
         run_devctr \
             --user "$(id -u):$(id -g)" \
+            --ulimit nofile=4096:4096 \
             --device=/dev/kvm:/dev/kvm \
             --workdir "$CTR_FC_ROOT_DIR" \
             --env PS1="$(whoami)@\h:\w\$ " \
@@ -827,6 +832,13 @@ check_swap () {
 	say_warn "WARNING: SWAP enabled"
 }
 
+check_vm() {
+    if [ $(dmesg | grep -c -i "hypervisor detected") -gt 0 ]; then
+        say_warn "WARNING: you are running in a virtual machine." \
+	"Firecracker is not well tested under nested virtualization."
+    fi
+}
+
 cmd_checkenv() {
     # Parse any command line args.
     while [ $# -gt 0 ]; do
@@ -844,6 +856,7 @@ cmd_checkenv() {
     say "Please check $QUICKSTART in case of any error."
     ensure_kvm_rw
     check_kernver
+    check_vm
     say "Checking Host Security Configuration."
     say "Please check $PROD_DOC in case of any error."
     check_KSM

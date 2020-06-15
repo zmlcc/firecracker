@@ -6,15 +6,18 @@
 // found in the THIRD-PARTY file.
 
 //! Emulates virtual and hardware devices.
-extern crate epoll;
+
 extern crate libc;
 
 extern crate dumbo;
 #[macro_use]
 extern crate logger;
 extern crate net_gen;
+extern crate polly;
 extern crate rate_limiter;
-extern crate virtio_gen;
+extern crate snapshot;
+extern crate versionize;
+extern crate versionize_derive;
 extern crate vm_memory;
 
 use rate_limiter::Error as RateLimiterError;
@@ -24,15 +27,14 @@ mod bus;
 pub mod legacy;
 pub mod virtio;
 
-pub use self::bus::{Bus, BusDevice, Error as BusError, RawIOHandler};
-use virtio::AsAny;
+pub use self::bus::{Bus, BusDevice, Error as BusError};
+use logger::{Metric, METRICS};
 
-pub type DeviceEventT = u16;
-
-type Result<T> = std::result::Result<T, Error>;
-
-pub trait EpollHandler: AsAny + Send {
-    fn handle_event(&mut self, device_event: DeviceEventT, evset: epoll::Events) -> Result<()>;
+// Function used for reporting error in terms of logging
+// but also in terms of METRICS net event fails.
+pub(crate) fn report_net_event_fail(err: Error) {
+    error!("{:?}", err);
+    METRICS.net.event_fails.inc();
 }
 
 #[derive(Debug)]
@@ -45,10 +47,7 @@ pub enum Error {
     FailedSignalingUsedQueue(io::Error),
     RateLimited(RateLimiterError),
     PayloadExpected,
-    UnknownEvent {
-        device: &'static str,
-        event: DeviceEventT,
-    },
     IoError(io::Error),
     NoAvailBuffers,
+    SpuriousEvent,
 }

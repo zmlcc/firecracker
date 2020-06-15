@@ -1,14 +1,18 @@
 // Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use rate_limiter::{RateLimiter, TokenBucket};
 use std::convert::TryInto;
+use std::fs::{File, OpenOptions};
 use std::io;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::PathBuf;
+
+use libc::O_NONBLOCK;
+
+use rate_limiter::RateLimiter;
 
 /// Wrapper for configuring the microVM boot source.
 pub mod boot_source;
-/// Wrapper for device configurations.
-pub mod device_config;
 /// Wrapper for configuring the block devices.
 pub mod drive;
 /// Wrapper over the microVM general information attached to the microVM.
@@ -17,8 +21,14 @@ pub mod instance_info;
 pub mod logger;
 /// Wrapper for configuring the memory and CPU of the microVM.
 pub mod machine_config;
+/// Wrapper for configuring the metrics.
+pub mod metrics;
+/// Wrapper for configuring the MMDS.
+pub mod mmds;
 /// Wrapper for configuring the network devices attached to the microVM.
 pub mod net;
+/// Wrapper for configuring microVM snapshots and the microVM state.
+pub mod snapshot;
 /// Wrapper for configuring the vsock devices attached to the microVM.
 pub mod vsock;
 
@@ -43,12 +53,6 @@ pub struct TokenBucketConfig {
     pub refill_time: u64,
 }
 
-impl Into<TokenBucket> for TokenBucketConfig {
-    fn into(self) -> TokenBucket {
-        TokenBucket::new(self.size, self.one_time_burst, self.refill_time)
-    }
-}
-
 /// A public-facing, stateless structure, holding all the data we need to create a RateLimiter
 /// (live) object.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
@@ -60,37 +64,45 @@ pub struct RateLimiterConfig {
     pub ops: Option<TokenBucketConfig>,
 }
 
-impl RateLimiterConfig {
-    /// Updates the configuration, merging in new options from `new_config`.
-    pub fn update(&mut self, new_config: &RateLimiterConfig) {
-        if new_config.bandwidth.is_some() {
-            self.bandwidth = new_config.bandwidth;
-        }
-        if new_config.ops.is_some() {
-            self.ops = new_config.ops;
-        }
-    }
-}
-
 impl TryInto<RateLimiter> for RateLimiterConfig {
     type Error = io::Error;
 
-    fn try_into(self) -> Result<RateLimiter, Self::Error> {
+    fn try_into(self) -> std::result::Result<RateLimiter, Self::Error> {
         let bw = self.bandwidth.unwrap_or_default();
         let ops = self.ops.unwrap_or_default();
         RateLimiter::new(
             bw.size,
-            bw.one_time_burst,
+            bw.one_time_burst.unwrap_or(0),
             bw.refill_time,
             ops.size,
-            ops.one_time_burst,
+            ops.one_time_burst.unwrap_or(0),
             ops.refill_time,
         )
     }
 }
 
+type Result<T> = std::result::Result<T, std::io::Error>;
+
+/// Create and opens a File for writing to it.
+/// In case we open a FIFO, in order to not block the instance if nobody is consuming the message
+/// that is flushed to the two pipes, we are opening it with `O_NONBLOCK` flag.
+/// In this case, writing to a pipe will start failing when reaching 64K of unconsumed content.
+fn open_file_nonblock(path: &PathBuf) -> Result<File> {
+    OpenOptions::new()
+        .custom_flags(O_NONBLOCK)
+        .read(true)
+        .write(true)
+        .open(&path)
+}
+
+type FcLineWriter = io::LineWriter<File>;
+
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
+    use utils::tempfile::TempFile;
+
     use super::*;
 
     #[test]
@@ -99,17 +111,7 @@ mod tests {
         const ONE_TIME_BURST: u64 = 1024;
         const REFILL_TIME: u64 = 1000;
 
-        let b: TokenBucket = TokenBucketConfig {
-            size: SIZE,
-            one_time_burst: Some(ONE_TIME_BURST),
-            refill_time: REFILL_TIME,
-        }
-        .into();
-        assert_eq!(b.capacity(), SIZE);
-        assert_eq!(b.one_time_burst(), ONE_TIME_BURST);
-        assert_eq!(b.refill_time_ms(), REFILL_TIME);
-
-        let mut rlconf = RateLimiterConfig {
+        let rlconf = RateLimiterConfig {
             bandwidth: Some(TokenBucketConfig {
                 size: SIZE,
                 one_time_burst: Some(ONE_TIME_BURST),
@@ -128,23 +130,19 @@ mod tests {
         assert_eq!(rl.ops().unwrap().capacity(), SIZE * 2);
         assert_eq!(rl.ops().unwrap().one_time_burst(), 0);
         assert_eq!(rl.ops().unwrap().refill_time_ms(), REFILL_TIME * 2);
+    }
 
-        rlconf.update(&RateLimiterConfig {
-            bandwidth: Some(TokenBucketConfig {
-                size: SIZE * 2,
-                one_time_burst: Some(ONE_TIME_BURST * 2),
-                refill_time: REFILL_TIME * 2,
-            }),
-            ops: None,
-        });
-        assert_eq!(rlconf.bandwidth.unwrap().size, SIZE * 2);
-        assert_eq!(
-            rlconf.bandwidth.unwrap().one_time_burst,
-            Some(ONE_TIME_BURST * 2)
-        );
-        assert_eq!(rlconf.bandwidth.unwrap().refill_time, REFILL_TIME * 2);
-        assert_eq!(rlconf.ops.unwrap().size, SIZE * 2);
-        assert_eq!(rlconf.ops.unwrap().one_time_burst, None);
-        assert_eq!(rlconf.ops.unwrap().refill_time, REFILL_TIME * 2);
+    #[test]
+    fn test_fifo_line_writer() {
+        let log_file_temp =
+            TempFile::new().expect("Failed to create temporary output logging file.");
+        let good_file = log_file_temp.as_path().to_path_buf();
+        let maybe_fifo = open_file_nonblock(&good_file);
+        assert!(maybe_fifo.is_ok());
+        let mut fw = FcLineWriter::new(maybe_fifo.unwrap());
+
+        let msg = String::from("some message");
+        assert!(fw.write(&msg.as_bytes()).is_ok());
+        assert!(fw.flush().is_ok());
     }
 }

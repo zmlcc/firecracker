@@ -1,4 +1,4 @@
-![Firecracker Logo Title](docs/images/fc_logo_full_white-bg.png)
+This repo is a fork of [firecracker](https://github.com/firecracker-microvm/firecracker), with some changes to adapt to uclud environment.
 
 Our mission is to enable secure, multi-tenant, minimal-overhead execution of
 container and function workloads.
@@ -39,8 +39,8 @@ To get started with Firecracker, download the latest
 [release](https://github.com/firecracker-microvm/firecracker/releases) binaries
 or build it from source.
 
-You can build Firecracker on any system that has Docker running (we use a
-development container) as follows:
+You can build Firecracker on any Unix/Linux system that has Docker running
+(we use a development container) and `bash` installed, as follows:
 
 ```bash
 git clone https://github.com/firecracker-microvm/firecracker

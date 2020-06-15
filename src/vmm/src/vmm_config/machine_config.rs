@@ -16,8 +16,6 @@ pub enum VmConfigError {
     InvalidVcpuCount,
     /// The memory size is invalid. The memory can only be an unsigned integer.
     InvalidMemorySize,
-    /// Cannot update the configuration of the microvm post boot.
-    UpdateNotAllowedPostBoot,
 }
 
 impl fmt::Display for VmConfigError {
@@ -30,9 +28,6 @@ impl fmt::Display for VmConfigError {
                  be 1 or an even number when hyperthreading is enabled.",
             ),
             InvalidMemorySize => write!(f, "The memory size (MiB) is invalid.",),
-            UpdateNotAllowedPostBoot => {
-                write!(f, "The update operation is not allowed after boot.")
-            }
         }
     }
 }
@@ -58,6 +53,9 @@ pub struct VmConfig {
     /// A CPU template that it is used to filter the CPU features exposed to the guest.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu_template: Option<CpuFeaturesTemplate>,
+    /// Enables or disables dirty page tracking. Enabling allows incremental snapshots.
+    #[serde(default)]
+    pub track_dirty_pages: bool,
 }
 
 impl Default for VmConfig {
@@ -67,6 +65,7 @@ impl Default for VmConfig {
             mem_size_mib: Some(128),
             ht_enabled: Some(false),
             cpu_template: None,
+            track_dirty_pages: false,
         }
     }
 }
@@ -79,9 +78,12 @@ impl fmt::Display for VmConfig {
         let cpu_template = self
             .cpu_template
             .map_or("Uninitialized".to_string(), |c| c.to_string());
-
-        write!(f, "{{ \"vcpu_count\": {:?}, \"mem_size_mib\": {:?},  \"ht_enabled\": {:?},  \"cpu_template\": {:?} }}",
-               vcpu_count, mem_size, ht_enabled, cpu_template)
+        write!(
+            f,
+            "{{ \"vcpu_count\": {:?}, \"mem_size_mib\": {:?}, \"ht_enabled\": {:?}, \
+             \"cpu_template\": {:?}, \"track_dirty_pages\": {:?} }}",
+            vcpu_count, mem_size, ht_enabled, cpu_template, self.track_dirty_pages
+        )
     }
 }
 
@@ -138,11 +140,5 @@ mod tests {
 
         let expected_str = "The memory size (MiB) is invalid.";
         assert_eq!(VmConfigError::InvalidMemorySize.to_string(), expected_str);
-
-        let expected_str = "The update operation is not allowed after boot.";
-        assert_eq!(
-            VmConfigError::UpdateNotAllowedPostBoot.to_string(),
-            expected_str
-        );
     }
 }

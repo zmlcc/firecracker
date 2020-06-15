@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::fmt::{Display, Formatter, Result};
-use std::fs::File;
 use std::io;
 
 /// Default guest kernel command line:
@@ -18,19 +17,9 @@ use std::io;
 pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=1 pci=off nomodules 8250.nr_uarts=0 \
                                           i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd";
 
-/// Holds the kernel configuration.
-pub struct KernelConfig {
-    /// The commandline validated against correctness.
-    pub cmdline: kernel::cmdline::Cmdline,
-    /// The descriptor to the kernel file.
-    pub kernel_file: File,
-    /// The descriptor to the initrd file, if there is one
-    pub initrd_file: Option<File>,
-}
-
 /// Strongly typed data structure used to configure the boot source of the
 /// microvm.
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BootSourceConfig {
     /// Path of the kernel image.
@@ -49,11 +38,9 @@ pub enum BootSourceConfigError {
     /// The kernel file cannot be opened.
     InvalidKernelPath(io::Error),
     /// The initrd file cannot be opened.
-    InvalidInitrdPath,
+    InvalidInitrdPath(io::Error),
     /// The kernel command line is invalid.
     InvalidKernelCommandLine(String),
-    /// The boot source cannot be update post boot.
-    UpdateNotAllowedPostBoot,
 }
 
 impl Display for BootSourceConfigError {
@@ -61,17 +48,26 @@ impl Display for BootSourceConfigError {
         use self::BootSourceConfigError::*;
         match *self {
             InvalidKernelPath(ref e) => write!(f, "The kernel file cannot be opened: {}", e),
-            InvalidInitrdPath => write!(
+            InvalidInitrdPath(ref e) => write!(
                 f,
                 "The initrd file cannot be opened due to invalid path or \
-                 invalid permissions.",
+                 invalid permissions. {}",
+                e,
             ),
             InvalidKernelCommandLine(ref e) => {
                 write!(f, "The kernel command line is invalid: {}", e.as_str())
             }
-            UpdateNotAllowedPostBoot => {
-                write!(f, "The update operation is not allowed after boot.")
-            }
         }
     }
+}
+
+/// Holds the kernel configuration.
+#[derive(Debug)]
+pub struct BootConfig {
+    /// The commandline validated against correctness.
+    pub cmdline: kernel::cmdline::Cmdline,
+    /// The descriptor to the kernel file.
+    pub kernel_file: std::fs::File,
+    /// The descriptor to the initrd file, if there is one
+    pub initrd_file: Option<std::fs::File>,
 }

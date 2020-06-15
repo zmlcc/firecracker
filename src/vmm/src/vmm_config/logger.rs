@@ -3,60 +3,14 @@
 
 //! Auxiliary module for configuring the logger.
 
-use libc::O_NONBLOCK;
+extern crate logger as logger_crate;
+
 use std::fmt::{Display, Formatter};
-use std::fs::{File, OpenOptions};
-use std::io::{LineWriter, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
 
-type Result<T> = std::result::Result<T, std::io::Error>;
-
-/// Structure `LoggerWriter` used for writing to a FIFO.
-pub struct LoggerWriter {
-    line_writer: Mutex<LineWriter<File>>,
-}
-
-impl LoggerWriter {
-    /// Create and open a FIFO for writing to it.
-    /// In order to not block the instance if nobody is consuming the logs that are flushed to the
-    /// two pipes, we are opening them with `O_NONBLOCK` flag. In this case, writing to a pipe will
-    /// start failing when reaching 64K of unconsumed content. Simultaneously,
-    /// the `missed_metrics_count` metric will get increased.
-    pub fn new(fifo_path: &str) -> Result<LoggerWriter> {
-        let fifo = PathBuf::from(fifo_path);
-        OpenOptions::new()
-            .custom_flags(O_NONBLOCK)
-            .read(true)
-            .write(true)
-            .open(&fifo)
-            .map(|t| LoggerWriter {
-                line_writer: Mutex::new(LineWriter::new(t)),
-            })
-    }
-
-    fn get_line_writer(&self) -> MutexGuard<LineWriter<File>> {
-        match self.line_writer.lock() {
-            Ok(guard) => guard,
-            // If a thread panics while holding this lock, the writer within should still be usable.
-            // (we might get an incomplete log line or something like that).
-            Err(poisoned) => poisoned.into_inner(),
-        }
-    }
-}
-
-impl Write for LoggerWriter {
-    fn write(&mut self, msg: &[u8]) -> Result<(usize)> {
-        let mut line_writer = self.get_line_writer();
-        line_writer.write_all(msg).map(|()| msg.len())
-    }
-
-    fn flush(&mut self) -> Result<()> {
-        let mut line_writer = self.get_line_writer();
-        line_writer.flush()
-    }
-}
+use self::logger_crate::{LevelFilter, LOGGER};
+use super::{open_file_nonblock, FcLineWriter};
+use vmm_config::instance_info::InstanceInfo;
 
 /// Enum used for setting the log level.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -74,16 +28,47 @@ pub enum LoggerLevel {
     Debug,
 }
 
+impl LoggerLevel {
+    /// Converts from a logger level value of type String to the corresponding LoggerLevel variant
+    /// or returns an error if the parsing failed.
+    pub fn from_string(level: String) -> std::result::Result<Self, LoggerConfigError> {
+        match level.as_str() {
+            "Error" => Ok(LoggerLevel::Error),
+            "Warning" => Ok(LoggerLevel::Warning),
+            "Info" => Ok(LoggerLevel::Info),
+            "Debug" => Ok(LoggerLevel::Debug),
+            invalid_value => Err(LoggerConfigError::InitializationFailure(
+                invalid_value.to_string(),
+            )),
+        }
+    }
+}
+
+impl Default for LoggerLevel {
+    fn default() -> LoggerLevel {
+        LoggerLevel::Warning
+    }
+}
+
+impl Into<LevelFilter> for LoggerLevel {
+    fn into(self) -> LevelFilter {
+        match self {
+            LoggerLevel::Error => LevelFilter::Error,
+            LoggerLevel::Warning => LevelFilter::Warn,
+            LoggerLevel::Info => LevelFilter::Info,
+            LoggerLevel::Debug => LevelFilter::Debug,
+        }
+    }
+}
+
 /// Strongly typed structure used to describe the logger.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LoggerConfig {
-    /// Named pipe used as output for logs.
-    pub log_fifo: String,
-    /// Named pipe used as output for metrics.
-    pub metrics_fifo: String,
+    /// Named pipe or file used as output for logs.
+    pub log_path: PathBuf,
     /// The level of the Logger.
-    #[serde(default = "default_level")]
+    #[serde(default = "LoggerLevel::default")]
     pub level: LoggerLevel,
     /// When enabled, the logger will append to the output the severity of the log entry.
     #[serde(default)]
@@ -93,8 +78,21 @@ pub struct LoggerConfig {
     pub show_log_origin: bool,
 }
 
-fn default_level() -> LoggerLevel {
-    LoggerLevel::Warning
+impl LoggerConfig {
+    /// Creates a new LoggerConfig.
+    pub fn new(
+        log_path: PathBuf,
+        level: LoggerLevel,
+        show_level: bool,
+        show_log_origin: bool,
+    ) -> LoggerConfig {
+        LoggerConfig {
+            log_path,
+            level,
+            show_level,
+            show_log_origin,
+        }
+    }
 }
 
 /// Errors associated with actions on the `LoggerConfig`.
@@ -102,8 +100,6 @@ fn default_level() -> LoggerLevel {
 pub enum LoggerConfigError {
     /// Cannot initialize the logger due to bad user input.
     InitializationFailure(String),
-    /// Cannot flush the metrics.
-    FlushMetrics(String),
 }
 
 impl Display for LoggerConfigError {
@@ -111,28 +107,153 @@ impl Display for LoggerConfigError {
         use self::LoggerConfigError::*;
         match *self {
             InitializationFailure(ref err_msg) => write!(f, "{}", err_msg.replace("\"", "")),
-            FlushMetrics(ref err_msg) => write!(f, "{}", err_msg.replace("\"", "")),
         }
     }
 }
 
+/// Configures the logger as described in `logger_cfg`.
+pub fn init_logger(
+    logger_cfg: LoggerConfig,
+    instance_info: &InstanceInfo,
+) -> std::result::Result<(), LoggerConfigError> {
+    LOGGER
+        .set_max_level(logger_cfg.level.into())
+        .set_include_origin(logger_cfg.show_log_origin, logger_cfg.show_log_origin)
+        .set_include_level(logger_cfg.show_level);
+
+    let writer = FcLineWriter::new(
+        open_file_nonblock(&logger_cfg.log_path)
+            .map_err(|e| LoggerConfigError::InitializationFailure(e.to_string()))?,
+    );
+    LOGGER
+        .init(
+            format!(
+                "Running {} v{}",
+                instance_info.app_name, instance_info.vmm_version
+            ),
+            Box::new(writer),
+        )
+        .map_err(|e| LoggerConfigError::InitializationFailure(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
+    use std::io::{BufRead, BufReader};
 
     use super::*;
     use utils::tempfile::TempFile;
+    use utils::time::TimestampUs;
+
+    use Vmm;
 
     #[test]
-    fn test_log_writer() {
-        let log_file_temp =
-            TempFile::new().expect("Failed to create temporary output logging file.");
-        let good_file = String::from(log_file_temp.as_path().to_path_buf().to_str().unwrap());
-        let res = LoggerWriter::new(&good_file);
-        assert!(res.is_ok());
+    fn test_init_logger() {
+        let default_instance_info = InstanceInfo {
+            id: "".to_string(),
+            started: false,
+            vmm_version: "some_version".to_string(),
+            app_name: "".to_string(),
+        };
 
-        let mut fw = res.unwrap();
-        let msg = String::from("some message");
-        assert!(fw.write(&msg.as_bytes()).is_ok());
-        assert!(fw.flush().is_ok());
+        // Error case: initializing logger with invalid pipe returns error.
+        let desc = LoggerConfig {
+            log_path: PathBuf::from("not_found_file_log"),
+            level: LoggerLevel::Debug,
+            show_level: false,
+            show_log_origin: false,
+        };
+        assert!(init_logger(desc, &default_instance_info).is_err());
+
+        // Initializing logger with valid pipe is ok.
+        let log_file = TempFile::new().unwrap();
+        let desc = LoggerConfig {
+            log_path: log_file.as_path().to_path_buf(),
+            level: LoggerLevel::Info,
+            show_level: true,
+            show_log_origin: true,
+        };
+
+        assert!(init_logger(desc.clone(), &default_instance_info).is_ok());
+        assert!(init_logger(desc, &default_instance_info).is_err());
+
+        // Validate logfile works.
+        warn!("this is a test");
+
+        let mut reader = BufReader::new(log_file.into_file());
+
+        let mut line = String::new();
+        loop {
+            if line.contains("this is a test") {
+                break;
+            }
+            if reader.read_line(&mut line).unwrap() == 0 {
+                // If it ever gets here, this assert will fail.
+                assert!(line.contains("this is a test"));
+            }
+        }
+
+        // Validate logging the boot time works.
+        Vmm::log_boot_time(&TimestampUs::default());
+        let mut line = String::new();
+        loop {
+            if line.contains("Guest-boot-time =") {
+                break;
+            }
+            if reader.read_line(&mut line).unwrap() == 0 {
+                // If it ever gets here, this assert will fail.
+                assert!(line.contains("Guest-boot-time ="));
+            }
+        }
+    }
+
+    #[test]
+    fn test_error_display() {
+        assert_eq!(
+            format!(
+                "{}",
+                LoggerConfigError::InitializationFailure(String::from(
+                    "Failed to initialize logger"
+                ))
+            ),
+            "Failed to initialize logger"
+        );
+    }
+
+    #[test]
+    fn test_new_logger_config() {
+        let logger_config =
+            LoggerConfig::new(PathBuf::from("log"), LoggerLevel::Debug, false, true);
+        assert_eq!(logger_config.log_path, PathBuf::from("log"));
+        assert_eq!(logger_config.level, LoggerLevel::Debug);
+        assert_eq!(logger_config.show_level, false);
+        assert_eq!(logger_config.show_log_origin, true);
+    }
+
+    #[test]
+    fn test_parse_level() {
+        // Check `from_string()` behaviour for different scenarios.
+        assert_eq!(
+            format!(
+                "{}",
+                LoggerLevel::from_string("random_value".to_string()).unwrap_err()
+            ),
+            "random_value"
+        );
+        assert_eq!(
+            LoggerLevel::from_string("Error".to_string()).unwrap(),
+            LoggerLevel::Error
+        );
+        assert_eq!(
+            LoggerLevel::from_string("Warning".to_string()).unwrap(),
+            LoggerLevel::Warning
+        );
+        assert_eq!(
+            LoggerLevel::from_string("Info".to_string()).unwrap(),
+            LoggerLevel::Info
+        );
+        assert_eq!(
+            LoggerLevel::from_string("Debug".to_string()).unwrap(),
+            LoggerLevel::Debug
+        );
     }
 }

@@ -35,6 +35,10 @@ pub use x86_64::{
     layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE, layout::IRQ_MAX, Error, MMIO_MEM_START,
 };
 
+#[cfg(target_arch = "x86_64")]
+#[cfg(feature = "hugetlb")]
+pub use x86_64::{HUGE_PAGE_SIZE, arch_huge_memory_regions};
+
 /// Type for returning public functions outcome.
 pub type Result<T> = result::Result<T, Error>;
 

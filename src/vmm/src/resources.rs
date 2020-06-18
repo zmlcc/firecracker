@@ -197,6 +197,12 @@ impl VmResources {
             self.vm_config.cpu_template = machine_config.cpu_template;
         }
 
+        #[cfg(feature = "hugetlb")]
+        if machine_config.hugetlb_path.is_some() {
+            self.vm_config.hugetlb_path = machine_config.hugetlb_path.clone();
+        }
+
+
         Ok(())
     }
 
@@ -727,6 +733,7 @@ mod tests {
             ht_enabled: Some(true),
             cpu_template: Some(CpuFeaturesTemplate::T2),
             track_dirty_pages: false,
+            hugetlb_path: None,
         };
 
         assert_ne!(vm_resources.vm_config, aux_vm_config);

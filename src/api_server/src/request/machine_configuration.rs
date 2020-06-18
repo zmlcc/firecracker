@@ -80,6 +80,8 @@ mod tests {
             ht_enabled: Some(true),
             cpu_template: Some(CpuFeaturesTemplate::T2),
             track_dirty_pages: true,
+            #[cfg(feature = "hugetlb")]
+            hugetlb_path: None,
         };
         match vmm_action_from_request(parse_put_machine_config(&Body::new(body)).unwrap()) {
             VmmAction::SetVmConfiguration(config) => assert_eq!(config, expected_config),
@@ -97,6 +99,8 @@ mod tests {
             ht_enabled: Some(true),
             cpu_template: None,
             track_dirty_pages: false,
+            #[cfg(feature = "hugetlb")]
+            hugetlb_path: None,
         };
         match vmm_action_from_request(parse_put_machine_config(&Body::new(body)).unwrap()) {
             VmmAction::SetVmConfiguration(config) => assert_eq!(config, expected_config),

@@ -14,3 +14,7 @@ polly = { path = "../polly" }
 seccomp = { path = "../seccomp" }
 utils = { path = "../utils" }
 vmm = { path = "../vmm" }
+
+[features]
+default = ["hugetlb"]
+hugetlb = ["api_server/hugetlb"]

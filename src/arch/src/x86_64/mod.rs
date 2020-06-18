@@ -53,6 +53,13 @@ const MEM_32BIT_GAP_SIZE: u64 = 768 << 20;
 /// The start of the memory area reserved for MMIO devices.
 pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;
 
+/// Huge page size: 2M
+#[cfg(feature = "hugetlb")]
+pub const HUGE_PAGE_SIZE: usize = 2 << 20;
+/// last aligned address before memory gap: 3G
+#[cfg(feature = "hugetlb")]
+const LAST_ADDR_BEFORE_GAP: usize = 3 * (1 << 30);
+
 /// Returns a Vec of the valid memory addresses.
 /// These should be used to configure the GuestMemoryMmap structure for the platform.
 /// For x86_64 all addresses are valid from the start of the kernel except a
@@ -66,6 +73,21 @@ pub fn arch_memory_regions(size: usize) -> Vec<(GuestAddress, usize)> {
         // case2: guest memory extends beyond the gap
         Some(remaining) => vec![
             (GuestAddress(0), MMIO_MEM_START as usize),
+            (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
+        ],
+    }
+}
+
+#[cfg(feature = "hugetlb")]
+/// Returns a Vec of the valid memory addresses.
+/// Memory size should be aligned with huge page size
+pub fn arch_huge_memory_regions(size: usize) -> Vec<(GuestAddress, usize)> {
+    match size.checked_sub(LAST_ADDR_BEFORE_GAP) {
+        // case1: guest memory fits before the gap
+        None | Some(0) => vec![(GuestAddress(0), size)],
+        // case2: guest memory extends beyond the gap
+        Some(remaining) => vec![
+            (GuestAddress(0), LAST_ADDR_BEFORE_GAP),
             (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
         ],
     }

@@ -56,6 +56,11 @@ pub struct VmConfig {
     /// Enables or disables dirty page tracking. Enabling allows incremental snapshots.
     #[serde(default)]
     pub track_dirty_pages: bool,
+    /// Using hugetlb mmap with hugetlb_path
+    #[cfg(feature = "hugetlb")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hugetlb_path: Option<String>,
+
 }
 
 impl Default for VmConfig {
@@ -66,6 +71,9 @@ impl Default for VmConfig {
             ht_enabled: Some(false),
             cpu_template: None,
             track_dirty_pages: false,
+            #[cfg(feature = "hugetlb")]
+            hugetlb_path: None,
+
         }
     }
 }

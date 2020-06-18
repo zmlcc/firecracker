@@ -31,6 +31,12 @@ use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
 use utils::time::TimestampUs;
 use vm_memory::{Bytes, GuestAddress, GuestMemoryMmap};
+#[cfg(feature = "hugetlb")]
+use {
+    std::fs::OpenOptions,
+    vm_memory::FileOffset,
+};
+
 
 /// Errors associated with starting the instance.
 #[derive(Debug)]
@@ -74,6 +80,12 @@ pub enum StartMicrovmError {
     #[cfg(target_arch = "x86_64")]
     /// Cannot restore microvm state.
     RestoreMicrovmState(MicrovmStateError),
+    #[cfg(feature = "hugetlb")]
+    /// Cannot open or truncate hugetlb file
+    OpenHugetlbFile(io::Error),
+    #[cfg(feature = "hugetlb")]
+    /// Guest memory size is not aligned with huge page size
+    MemorySizeNotAligned,
 }
 
 /// It's convenient to automatically convert `kernel::cmdline::Error`s
@@ -153,6 +165,17 @@ impl Display for StartMicrovmError {
             }
             #[cfg(target_arch = "x86_64")]
             RestoreMicrovmState(err) => write!(f, "Cannot restore microvm state. Error: {}", err),
+            #[cfg(feature = "hugetlb")]
+            OpenHugetlbFile(ref err) => {
+                let mut err_msg = format!("{:?}", err);
+                err_msg = err_msg.replace("\"", "");
+                write!(f, "Cannot open or truncate hugetlb file. {}", err_msg)
+            }
+            #[cfg(feature = "hugetlb")]
+            MemorySizeNotAligned => {
+                write!(f, "Guest memory size is not aligned with huge page size")
+            }
+
         }
     }
 }
@@ -287,12 +310,30 @@ pub fn build_microvm_for_boot(
     use self::StartMicrovmError::*;
     let boot_config = vm_resources.boot_source().ok_or(MissingKernelConfig)?;
 
+    #[cfg(not(feature = "hugetlb"))]
     let guest_memory = create_guest_memory(
         vm_resources
             .vm_config()
             .mem_size_mib
             .ok_or(MissingMemSizeConfig)?,
     )?;
+
+    #[cfg(feature = "hugetlb")]
+    let guest_memory = match &vm_resources.vm_config().hugetlb_path {
+        Some(hugetlb_path) => create_guest_hugetlb_memory(
+            vm_resources
+                .vm_config()
+                .mem_size_mib
+                .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
+                &hugetlb_path,
+        ),
+        None => create_guest_memory(
+            vm_resources
+                .vm_config()
+                .mem_size_mib
+                .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
+        ),
+    }?;
     let vcpu_config = vm_resources.vcpu_config();
     let track_dirty_pages = vm_resources.track_dirty_pages();
     let entry_addr = load_kernel(boot_config, &guest_memory)?;
@@ -422,13 +463,60 @@ pub fn build_microvm_from_snapshot(
     Ok(vmm)
 }
 
+#[cfg(feature = "hugetlb")]
+/// Creates GuestMemory of `mem_size_mib` MiB in size.
+pub fn create_guest_hugetlb_memory(
+    mem_size_mib: usize,
+    hugetlb_path: &str,
+) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
+
+    let mem_size = mem_size_mib << 20;
+    if mem_size % arch::HUGE_PAGE_SIZE != 0 {
+        return Err(StartMicrovmError::MemorySizeNotAligned);
+    }
+
+    let hugetlb_file = Arc::new(
+        OpenOptions::new()
+            .truncate(true)
+            .write(true)
+            .read(true)
+            .create(true)
+            .open(hugetlb_path)
+            .map_err(StartMicrovmError::OpenHugetlbFile)?,
+    );
+
+    hugetlb_file
+        .set_len(mem_size as u64)
+        .map_err(StartMicrovmError::OpenHugetlbFile)?;
+
+    let arch_mem_regions = arch::arch_huge_memory_regions(mem_size);
+    let arch_mem_regions_with_files: Vec<_> = arch_mem_regions
+        .iter()
+        .scan(0, |next_offset, &item| {
+            let offset = *next_offset as u64;
+            *next_offset = *next_offset + item.1;
+            Some((
+                item.0,
+                item.1,
+                Some(FileOffset::from_arc(hugetlb_file.clone(), offset)),
+            ))
+        })
+        .collect();
+        
+    Ok(
+        GuestMemoryMmap::from_ranges_with_files(arch_mem_regions_with_files)
+            .map_err(StartMicrovmError::GuestMemoryMmap)?,
+    )
+}
+
+
 /// Creates GuestMemory of `mem_size_mib` MiB in size.
 pub fn create_guest_memory(
     mem_size_mib: usize,
 ) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
     let mem_size = mem_size_mib << 20;
     let arch_mem_regions = arch::arch_memory_regions(mem_size);
-
+    
     Ok(GuestMemoryMmap::from_ranges(&arch_mem_regions)
         .map_err(StartMicrovmError::GuestMemoryMmap)?)
 }

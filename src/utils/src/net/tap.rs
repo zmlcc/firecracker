@@ -141,6 +141,57 @@ impl Tap {
         })
     }
 
+    /// Open existing macvtap
+    pub fn open_macvtap(if_name: &str) -> Result<Tap> {
+        let ifdex = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", if_name))
+            .map_err(|_| Error::InvalidIfname)?;
+
+        let tap_file = format!("/dev/tap{}", ifdex);
+        println!("FUCK {} {}", ifdex, tap_file);
+        let aaaa = std::ffi::CString::new(tap_file).unwrap();
+
+
+        let fd = unsafe {
+            // Open calls are safe because we give a constant null-terminated
+            // string and verify the result.
+            libc::open(
+                aaaa.as_ptr(),
+                libc::O_RDWR | libc::O_NONBLOCK | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            println!("FUCK AAAAA");
+            return Err(Error::OpenTun(IoError::last_os_error()));
+        }
+
+        // We just checked that the fd is valid.
+        let tuntap = unsafe { File::from_raw_fd(fd) };
+
+        // This is pretty messy because of the unions used by ifreq. Since we
+        // don't call as_mut on the same union field more than once, this block
+        // is safe.
+        let mut ifreq: net_gen::ifreq = Default::default();
+        unsafe {
+            let ifru_flags = ifreq.ifr_ifru.ifru_flags.as_mut();
+            *ifru_flags =
+                (net_gen::IFF_TAP | net_gen::IFF_NO_PI | net_gen::IFF_VNET_HDR) as c_short;
+        }
+
+        // ioctl is safe since we call it with a valid tap fd and check the return
+        // value.
+        let ret = unsafe { ioctl_with_mut_ref(&tuntap, TUNSETIFF(), &mut ifreq) };
+
+        if ret < 0 {
+            return Err(Error::CreateTap(IoError::last_os_error()));
+        }
+
+        // Safe since only the name is accessed, and it's cloned out.
+        Ok(Tap {
+            tap_file: tuntap,
+            if_name: unsafe { *ifreq.ifr_ifrn.ifrn_name.as_ref() },
+        })
+    }
+
     /// Set the offload flags for the tap interface.
     pub fn set_offload(&self, flags: c_uint) -> Result<()> {
         // ioctl is safe. Called with a valid tap fd, and we check the return.

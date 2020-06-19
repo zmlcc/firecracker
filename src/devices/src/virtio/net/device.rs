@@ -120,7 +120,7 @@ impl Net {
         tx_rate_limiter: RateLimiter,
         allow_mmds_requests: bool,
     ) -> Result<Self> {
-        let tap = Tap::open_named(&tap_if_name).map_err(Error::TapOpen)?;
+        let tap = Tap::open_macvtap(&tap_if_name).map_err(Error::TapOpen)?;
 
         // Set offload flags to match the virtio features below.
         tap.set_offload(

@@ -471,7 +471,7 @@ pub fn create_guest_hugetlb_memory(
 ) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
 
     let mem_size = mem_size_mib << 20;
-    if mem_size % arch::HUGE_PAGE_SIZE != 0 {
+    if mem_size % arch::x86_64::HUGE_PAGE_SIZE != 0 {
         return Err(StartMicrovmError::MemorySizeNotAligned);
     }
 
@@ -489,7 +489,7 @@ pub fn create_guest_hugetlb_memory(
         .set_len(mem_size as u64)
         .map_err(StartMicrovmError::OpenHugetlbFile)?;
 
-    let arch_mem_regions = arch::arch_huge_memory_regions(mem_size);
+    let arch_mem_regions = arch::arch_memory_regions(mem_size);
     let arch_mem_regions_with_files: Vec<_> = arch_mem_regions
         .iter()
         .scan(0, |next_offset, &item| {

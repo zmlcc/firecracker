@@ -37,6 +37,8 @@ use {
     vm_memory::FileOffset,
 };
 
+use vmm_config::vu_block::VuBlockBuilder;
+
 
 /// Errors associated with starting the instance.
 #[derive(Debug)]
@@ -361,6 +363,10 @@ pub fn build_microvm_for_boot(
         vm_resources.net_builder.iter(),
         event_manager,
     )?;
+    attach_vu_block_devices(&mut vmm, 
+        &mut boot_cmdline,
+        &vm_resources.vu_block, 
+        event_manager)?;
     if let Some(unix_vsock) = vm_resources.vsock.get() {
         attach_unixsock_vsock_device(&mut vmm, &mut boot_cmdline, unix_vsock, event_manager)?;
     }
@@ -842,6 +848,28 @@ fn attach_net_devices<'a>(
         // The device mutex mustn't be locked here otherwise it will deadlock.
         attach_virtio_device(event_manager, vmm, id, net_device.clone(), cmdline)?;
     }
+    Ok(())
+}
+
+fn attach_vu_block_devices(
+    vmm: &mut Vmm,
+    cmdline: &mut KernelCmdline,
+    vu_block_builder: &VuBlockBuilder,
+    event_manager: &mut EventManager,
+) -> std::result::Result<(), StartMicrovmError> {
+
+    for vu_block_device in vu_block_builder.iter() {
+        let id = vu_block_device.lock().unwrap().id().clone();
+        // The device mutex mustn't be locked here otherwise it will deadlock.
+        attach_virtio_device(
+            event_manager,
+            vmm,
+            id,
+            vu_block_device.clone(),
+            cmdline,
+        )?;
+    }
+
     Ok(())
 }
 

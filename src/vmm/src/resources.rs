@@ -20,6 +20,8 @@ use vmm_config::net::*;
 use vmm_config::vsock::*;
 use vstate::VcpuConfig;
 
+use vmm_config::vu_block::*;
+
 type Result<E> = std::result::Result<(), E>;
 
 /// Errors encountered when configuring microVM resources.
@@ -43,6 +45,8 @@ pub enum Error {
     VsockDevice(VsockConfigError),
     /// MMDS configuration error.
     MmdsConfig(MmdsConfigError),
+    /// Vhost user block device configuration error.
+    VuBlockDevice(VuBlockError),
 }
 
 /// Used for configuring a vmm from one single json passed to the Firecracker process.
@@ -64,6 +68,8 @@ pub struct VmmConfig {
     vsock_device: Option<VsockDeviceConfig>,
     #[serde(rename = "mmds-config")]
     mmds_config: Option<MmdsConfig>,
+    #[serde(rename = "vhost-user-blocks")]
+    vu_block_devices: Option<VuBlockConfig>,
 }
 
 /// A data structure that encapsulates the device configurations
@@ -82,6 +88,8 @@ pub struct VmResources {
     pub net_builder: NetBuilder,
     /// The configuration for `MmdsNetworkStack`.
     pub mmds_config: Option<MmdsConfig>,
+    /// The vhost user block devices.
+    pub vu_block: VuBlockBuilder,
 }
 
 impl VmResources {
@@ -135,6 +143,13 @@ impl VmResources {
                 .set_mmds_config(mmds_config)
                 .map_err(Error::MmdsConfig)?;
         }
+
+        for vu_block_config in vmm_config.vu_block_devices.into_iter() {
+            resources
+                .set_vu_block_device(vu_block_config)
+                .map_err(Error::VuBlockDevice)?;
+        }
+
 
         Ok(resources)
     }
@@ -253,6 +268,14 @@ impl VmResources {
     ) -> Result<DriveError> {
         self.block.insert(block_device_config)
     }
+
+    /// Inserts a vhost user block to be attached when the VM starts.
+    pub fn set_vu_block_device(
+        &mut self,
+        config: VuBlockConfig,
+    ) -> Result<VuBlockError> {
+        self.vu_block.insert(config)
+    }    
 
     /// Builds a network device to be attached when the VM starts.
     pub fn build_net_device(

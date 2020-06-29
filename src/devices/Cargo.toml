@@ -17,3 +17,6 @@ snapshot = { path = "../snapshot" }
 versionize = { git = "https://github.com/firecracker-microvm/versionize", tag = "v0.1.0" }
 versionize_derive = { git = "https://github.com/firecracker-microvm/versionize_derive", tag = "v0.1.0" }
 virtio_gen = { path = "../virtio_gen" }
+vhost_rs = { git = "ssh://git@git.ucloudadmin.com/torpedo/vhost.git", branch = "fea-ucloud_ext-200608", package = "vhost", features = ["vhost-user-master"] }
+memfd = "0.3.0"
+thiserror = "1.0"

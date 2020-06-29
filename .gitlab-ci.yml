@@ -2,9 +2,14 @@ stages:
   - Compile
   - Release
 
+before_script:
+  - eval $(ssh-agent -s)
+  - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+
 binary-compile:
   stage: Compile
   image: hub.ucloudadmin.com/cube/firecracker-builder:v16
+
   script:
     - mkdir -p $CI_PROJECT_DIR/bin
     - mkdir -p /firecracker/build/cargo_registry

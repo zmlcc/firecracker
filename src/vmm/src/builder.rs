@@ -37,6 +37,7 @@ use {
     vm_memory::FileOffset,
 };
 
+#[cfg(feature = "vublock")]
 use vmm_config::vu_block::VuBlockBuilder;
 
 
@@ -363,6 +364,7 @@ pub fn build_microvm_for_boot(
         vm_resources.net_builder.iter(),
         event_manager,
     )?;
+    #[cfg(feature = "vublock")]
     attach_vu_block_devices(&mut vmm, 
         &mut boot_cmdline,
         &vm_resources.vu_block, 
@@ -851,6 +853,7 @@ fn attach_net_devices<'a>(
     Ok(())
 }
 
+#[cfg(feature = "vublock")]
 fn attach_vu_block_devices(
     vmm: &mut Vmm,
     cmdline: &mut KernelCmdline,

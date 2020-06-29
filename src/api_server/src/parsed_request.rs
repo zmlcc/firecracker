@@ -22,6 +22,7 @@ use request::snapshot::parse_put_snapshot;
 use request::vsock::parse_put_vsock;
 use ApiServer;
 
+#[cfg(feature = "vublock")]
 use request::vu_block::parse_put_vublock;
 
 use vmm::rpc_interface::{VmmAction, VmmActionError};
@@ -67,6 +68,7 @@ impl ParsedRequest {
             #[cfg(target_arch = "x86_64")]
             (Method::Put, "snapshot", Some(body)) => parse_put_snapshot(body, path_tokens.get(1)),
             (Method::Put, "vsock", Some(body)) => parse_put_vsock(body),
+            #[cfg(feature = "vublock")]
             (Method::Put, "vhost-user-blocks", Some(body)) => parse_put_vublock(body, path_tokens.get(1)),
             (Method::Put, _, None) => method_to_error(Method::Put),
             (Method::Patch, "drives", Some(body)) => parse_patch_drive(body, path_tokens.get(1)),

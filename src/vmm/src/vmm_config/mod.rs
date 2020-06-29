@@ -31,6 +31,7 @@ pub mod net;
 pub mod snapshot;
 /// Wrapper for configuring the vsock devices attached to the microVM.
 pub mod vsock;
+#[cfg(feature = "vublock")]
 /// Wrapper for configuring vu_block.
 pub mod vu_block;
 

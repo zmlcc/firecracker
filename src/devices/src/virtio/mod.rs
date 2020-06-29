@@ -16,7 +16,7 @@ pub mod net;
 pub mod persist;
 mod queue;
 pub mod vsock;
-
+#[cfg(feature = "vublock")]
 pub mod vhost_user;
 
 pub use self::block::*;
@@ -27,6 +27,7 @@ pub use self::persist::*;
 pub use self::queue::*;
 pub use self::vsock::*;
 
+#[cfg(feature = "vublock")]
 pub use self::vhost_user::*;
 
 /// When the driver initializes the device, it lets the device know about the

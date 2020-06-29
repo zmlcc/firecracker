@@ -20,3 +20,4 @@ libc = ">=0.2.39"
 
 [features]
 hugetlb = ["vmm/hugetlb"]
+vublock = ["vmm/vublock"]

@@ -38,6 +38,7 @@ use vmm_config::net::{
 use vmm_config::snapshot::{CreateSnapshotParams, LoadSnapshotParams};
 use vmm_config::vsock::{VsockConfigError, VsockDeviceConfig};
 
+#[cfg(feature = "vublock")]
 use vmm_config::vu_block::{VuBlockConfig, VuBlockError};
 
 /// This enum represents the public interface of the VMM. Each action contains various
@@ -86,6 +87,7 @@ pub enum VmmAction {
     /// Set the microVM configuration (memory & vcpu) using `VmConfig` as input. This
     /// action can only be called before the microVM has booted.
     SetVmConfiguration(VmConfig),
+    #[cfg(feature = "vublock")]
     /// Add a new vhost user block device using `VuBlockConfig` as input.
     /// This action can only be called before the microVM has booted.
     InsertVuBlockDevice(VuBlockConfig),
@@ -137,6 +139,7 @@ pub enum VmmActionError {
     StartMicrovm(StartMicrovmError),
     /// The action `SetVsockDevice` failed because of bad user input.
     VsockConfig(VsockConfigError),
+    #[cfg(feature = "vublock")]
     /// The action `InsertNetworkDevice` failed because of bad user input.
     VuBlockConfig(VuBlockError),
 }
@@ -172,6 +175,7 @@ impl Display for VmmActionError {
                 StartMicrovm(err) => err.to_string(),
                 // The action `SetVsockDevice` failed because of bad user input.
                 VsockConfig(err) => err.to_string(),
+                #[cfg(feature = "vublock")]
                 VuBlockConfig(err) => err.to_string(),
             }
         )
@@ -313,6 +317,7 @@ impl<'a> PrebootApiController<'a> {
                 .set_mmds_config(mmds_config)
                 .map(|_| VmmData::Empty)
                 .map_err(VmmActionError::MmdsConfig),
+            #[cfg(feature = "vublock")]
             InsertVuBlockDevice(vu_block_device_config) => self
                 .vm_resources
                 .set_vu_block_device(vu_block_device_config)
@@ -376,6 +381,7 @@ impl RuntimeApiController {
                 .update_net_rate_limiters(netif_update)
                 .map(|_| VmmData::Empty),
 
+            #[cfg(feature = "vublock")]
             // Operations not allowed post-boot.
             ConfigureBootSource(_)
             | ConfigureLogger(_)
@@ -385,6 +391,17 @@ impl RuntimeApiController {
             | SetVsockDevice(_)
             | SetMmdsConfiguration(_)
             | InsertVuBlockDevice(_)
+            | SetVmConfiguration(_) => Err(VmmActionError::OperationNotSupportedPostBoot),
+
+            #[cfg(not(feature = "vublock"))]
+            // Operations not allowed post-boot.
+            ConfigureBootSource(_)
+            | ConfigureLogger(_)
+            | ConfigureMetrics(_)
+            | InsertBlockDevice(_)
+            | InsertNetworkDevice(_)
+            | SetVsockDevice(_)
+            | SetMmdsConfiguration(_)
             | SetVmConfiguration(_) => Err(VmmActionError::OperationNotSupportedPostBoot),
             #[cfg(target_arch = "x86_64")]
             LoadSnapshot(_) => Err(VmmActionError::OperationNotSupportedPostBoot),

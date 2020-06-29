@@ -16,5 +16,6 @@ utils = { path = "../utils" }
 vmm = { path = "../vmm" }
 
 [features]
-default = ["hugetlb"]
+default = ["hugetlb", "vublock"]
 hugetlb = ["api_server/hugetlb"]
+vublock = ["api_server/vublock"]

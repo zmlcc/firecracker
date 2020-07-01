@@ -1,0 +1,35 @@
+stages:
+  - Compile
+  - Release
+
+binary-compile:
+  stage: Compile
+  image: hub.ucloudadmin.com/cube/firecracker-builder:v16
+  script:
+    - mkdir -p $CI_PROJECT_DIR/bin
+    - mkdir -p /firecracker/build/cargo_registry
+    - mkdir -p /firecracker/build/cargo_git_registry
+    - cd $CI_PROJECT_DIR
+    - cargo build --release --target=x86_64-unknown-linux-musl
+    - strip -s build/cargo_target/x86_64-unknown-linux-musl/release/firecracker
+    - cp build/cargo_target/x86_64-unknown-linux-musl/release/firecracker $CI_PROJECT_DIR/bin/
+  artifacts:
+    paths:
+      - bin
+  only:
+    refs:
+      - ucloud
+      - tags
+
+#执行完后手动修改tag的发布信息
+release:
+  stage: Release
+  image: hub.ucloudadmin.com/cube/golang:1.13.10
+  script:
+    - sh release.sh
+  artifacts:
+    paths:
+      - bin
+  only:
+    refs:
+      - tags

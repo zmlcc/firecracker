@@ -14,7 +14,7 @@ pub fn parse_put_vublock(body: &Body, id_from_path: Option<&&str>) -> Result<Par
     let config = serde_json::from_slice::<VuBlockConfig>(body.raw()).map_err(|e| {
         Error::SerdeJson(e)
     })?;
-    if id != config.drive_id.as_str() {
+    if id != config.vublock_id.as_str() {
         return Err(Error::Generic(
             StatusCode::BadRequest,
             "The id from the path does not match the id from the body!".to_string(),

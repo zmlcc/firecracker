@@ -6,7 +6,7 @@ use devices::virtio::VhostUserBlock;
 
 type Result<T> = result::Result<T, VuBlockError>;
 
-/// Errors associated with the operations allowed on a drive.
+/// Errors associated with the operations allowed on a vublock.
 #[derive(Debug)]
 pub enum VuBlockError {
     /// Unable to create block device
@@ -32,9 +32,9 @@ impl Display for VuBlockError {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct VuBlockConfig {
-    /// ID of the vtfs device.
-    pub drive_id: String,
-    /// Path of the drive.
+    /// ID of the virtual user block.
+    pub vublock_id: String,
+    /// Path of the virtual user block.
     pub socket_path: String,
 }
 
@@ -50,11 +50,11 @@ pub struct VuBlockBuilder {
 
 impl VuBlockBuilder {
 
-    /// Gets the index of the device with the specified `drive_id` if it exists in the list.
-    fn get_index_of_drive_id(&self, drive_id: &str) -> Option<usize> {
+    /// Gets the index of the device with the specified `vublock_id` if it exists in the list.
+    fn get_index_of_vublock_id(&self, vublock_id: &str) -> Option<usize> {
         self.list
             .iter()
-            .position(|b| b.lock().unwrap().id().eq(drive_id))
+            .position(|b| b.lock().unwrap().id().eq(vublock_id))
     }
 
     /// Returns a immutable iterator over the vhost user block devices.
@@ -65,7 +65,7 @@ impl VuBlockBuilder {
     /// Inserts a `Block` in the vhost user block devices list using the specified configuration.
     /// If a block with the same id already exists, it will overwrite it.
     pub fn insert(&mut self, config: VuBlockConfig) -> Result<()> {
-        let position = self.get_index_of_drive_id(&config.drive_id);
+        let position = self.get_index_of_vublock_id(&config.vublock_id);
         let block_dev = Arc::new(Mutex::new(Self::create_block(config)?));
         match position {
             // New block device
@@ -82,7 +82,7 @@ impl VuBlockBuilder {
 
     /// Creates a Block device from a VuBlockConfig.
     pub fn create_block(config: VuBlockConfig) -> Result<VhostUserBlock> {
-        let ret = devices::virtio::VhostUserBlock::new(config.drive_id, &config.socket_path);
+        let ret = devices::virtio::VhostUserBlock::new(config.vublock_id, &config.socket_path);
         ret.map_err(VuBlockError::CreateBlockDevice)
     }
 }

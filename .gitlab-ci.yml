@@ -23,7 +23,6 @@ binary-compile:
       - bin
   only:
     refs:
-      - master
       - tags
       - branches
 

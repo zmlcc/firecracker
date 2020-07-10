@@ -35,6 +35,9 @@ pub mod vsock;
 /// Wrapper for configuring vu_block.
 pub mod vu_block;
 
+/// Wrapper for vhost net
+pub mod vhost_net;
+
 // TODO: Migrate the VMM public-facing code (i.e. interface) to use stateless structures,
 // for receiving data/args, such as the below `RateLimiterConfig` and `TokenBucketConfig`.
 // Also todo: find a better suffix than `Config`; it should illustrate the static nature

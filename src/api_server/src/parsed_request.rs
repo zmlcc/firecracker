@@ -25,6 +25,8 @@ use ApiServer;
 #[cfg(feature = "vublock")]
 use request::vu_block::parse_put_vublock;
 
+use request::vhost_net::parse_put_vhost_net;
+
 use vmm::rpc_interface::{VmmAction, VmmActionError};
 
 pub enum ParsedRequest {
@@ -70,6 +72,7 @@ impl ParsedRequest {
             (Method::Put, "vsock", Some(body)) => parse_put_vsock(body),
             #[cfg(feature = "vublock")]
             (Method::Put, "vhost-user-blocks", Some(body)) => parse_put_vublock(body, path_tokens.get(1)),
+            (Method::Put, "vhost-net-interfaces", Some(body)) => parse_put_vhost_net(body, path_tokens.get(1)),
             (Method::Put, _, None) => method_to_error(Method::Put),
             (Method::Patch, "drives", Some(body)) => parse_patch_drive(body, path_tokens.get(1)),
             (Method::Patch, "machine-config", Some(body)) => parse_patch_machine_config(body),

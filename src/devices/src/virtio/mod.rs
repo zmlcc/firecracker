@@ -19,6 +19,8 @@ pub mod vsock;
 #[cfg(feature = "vublock")]
 pub mod vhost_user;
 
+pub mod vhost;
+
 pub use self::block::*;
 pub use self::device::*;
 pub use self::mmio::*;

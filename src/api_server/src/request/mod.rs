@@ -14,6 +14,7 @@ pub mod snapshot;
 pub mod vsock;
 #[cfg(feature = "vublock")]
 pub mod vu_block;
+pub mod vhost_net;
 pub use micro_http::{
     Body, HttpServer, Method, Request, RequestError, Response, StatusCode, Version,
 };

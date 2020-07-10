@@ -23,6 +23,8 @@ use vstate::VcpuConfig;
 #[cfg(feature = "vublock")]
 use vmm_config::vu_block::*;
 
+use vmm_config::vhost_net::*;
+
 type Result<E> = std::result::Result<(), E>;
 
 /// Errors encountered when configuring microVM resources.
@@ -49,6 +51,8 @@ pub enum Error {
     #[cfg(feature = "vublock")]
     /// Vhost user block device configuration error.
     VuBlockDevice(VuBlockError),
+    /// Vhost net error
+    VhostNetDevice(VhostNetError),
 }
 
 /// Used for configuring a vmm from one single json passed to the Firecracker process.
@@ -73,6 +77,8 @@ pub struct VmmConfig {
     #[cfg(feature = "vublock")]
     #[serde(rename = "vhost-user-blocks")]
     vu_block_devices: Option<VuBlockConfig>,
+    #[serde(rename = "vhost-net-interfaces")]
+    vhost_net_devices: Vec<VhostNetConfig>,
 }
 
 /// A data structure that encapsulates the device configurations
@@ -94,6 +100,8 @@ pub struct VmResources {
     #[cfg(feature = "vublock")]
     /// The vhost user block devices.
     pub vu_block: VuBlockBuilder,
+    /// Vhost net
+    pub vhost_net: VhostNetBuilder,
 }
 
 impl VmResources {
@@ -153,6 +161,12 @@ impl VmResources {
             resources
                 .set_vu_block_device(vu_block_config)
                 .map_err(Error::VuBlockDevice)?;
+        }
+
+        for net_config in vmm_config.vhost_net_devices.into_iter() {
+            resources
+                .set_vhost_net_device(net_config)
+                .map_err(Error::VhostNetDevice)?;
         }
 
 
@@ -281,7 +295,16 @@ impl VmResources {
         config: VuBlockConfig,
     ) -> Result<VuBlockError> {
         self.vu_block.insert(config)
-    }    
+    }   
+    
+    /// vhost net device
+    pub fn set_vhost_net_device(
+        &mut self,
+        config: VhostNetConfig,
+    ) -> Result<VhostNetError> {
+        self.vhost_net.insert(config)
+    }   
+
 
     /// Builds a network device to be attached when the VM starts.
     pub fn build_net_device(

@@ -41,6 +41,8 @@ use vmm_config::vsock::{VsockConfigError, VsockDeviceConfig};
 #[cfg(feature = "vublock")]
 use vmm_config::vu_block::{VuBlockConfig, VuBlockError};
 
+use vmm_config::vhost_net::{VhostNetConfig, VhostNetError};
+
 /// This enum represents the public interface of the VMM. Each action contains various
 /// bits of information (ids, paths, etc.).
 #[derive(PartialEq)]
@@ -103,6 +105,8 @@ pub enum VmmAction {
     /// Update a network interface, after microVM start. Currently, the only updatable properties
     /// are the RX and TX rate limiters.
     UpdateNetworkInterface(NetworkInterfaceUpdateConfig),
+    /// Vhost net
+    InsertVhostNetDevice(VhostNetConfig),
 }
 
 /// Wrapper for all errors associated with VMM actions.
@@ -142,6 +146,8 @@ pub enum VmmActionError {
     #[cfg(feature = "vublock")]
     /// The action `InsertNetworkDevice` failed because of bad user input.
     VuBlockConfig(VuBlockError),
+    /// Vhost net
+    VhostNetConfig(VhostNetError)
 }
 
 impl Display for VmmActionError {
@@ -177,6 +183,7 @@ impl Display for VmmActionError {
                 VsockConfig(err) => err.to_string(),
                 #[cfg(feature = "vublock")]
                 VuBlockConfig(err) => err.to_string(),
+                VhostNetConfig(err) => err.to_string(),
             }
         )
     }
@@ -323,6 +330,8 @@ impl<'a> PrebootApiController<'a> {
                 .set_vu_block_device(vu_block_device_config)
                 .map(|_| VmmData::Empty)
                 .map_err(VmmActionError::VuBlockConfig),
+            InsertVhostNetDevice(vhost_net_config) => self.vm_resources.set_vhost_net_device(vhost_net_config).map(|_| VmmData::Empty)
+            .map_err(VmmActionError::VhostNetConfig),
             StartMicroVm => builder::build_microvm_for_boot(
                 &self.vm_resources,
                 &mut self.event_manager,
@@ -392,6 +401,8 @@ impl RuntimeApiController {
             | SetMmdsConfiguration(_)
             | InsertVuBlockDevice(_)
             | SetVmConfiguration(_) => Err(VmmActionError::OperationNotSupportedPostBoot),
+
+            InsertVhostNetDevice(_) => Err(VmmActionError::OperationNotSupportedPostBoot),
 
             #[cfg(not(feature = "vublock"))]
             // Operations not allowed post-boot.

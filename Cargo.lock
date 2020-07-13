@@ -248,7 +248,7 @@ dependencies = [
  "versionize 0.1.0 (git+https://github.com/firecracker-microvm/versionize?tag=v0.1.0)",
  "versionize_derive 0.1.0 (git+https://github.com/firecracker-microvm/versionize_derive?tag=v0.1.0)",
  "vhost 0.1.0",
- "vhost 0.1.0 (git+ssh://git@git.ucloudadmin.com/torpedo/vhost.git?branch=fea-ucloud_ext-200608)",
+ "vhost222 0.1.0",
  "virtio_gen 0.1.0",
  "vm-memory 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -803,20 +803,19 @@ dependencies = [
 [[package]]
 name = "vhost"
 version = "0.1.0"
-source = "git+ssh://git@git.ucloudadmin.com/torpedo/vhost.git?branch=fea-ucloud_ext-200608#59ff7a1e1e2671a142dfcda477f975a794312cad"
-dependencies = [
- "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "libc 0.2.72 (registry+https://github.com/rust-lang/crates.io-index)",
- "vmm-sys-util 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "vhost"
-version = "0.1.0"
 dependencies = [
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.72 (registry+https://github.com/rust-lang/crates.io-index)",
  "vm-memory 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "vmm-sys-util 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "vhost222"
+version = "0.1.0"
+dependencies = [
+ "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.72 (registry+https://github.com/rust-lang/crates.io-index)",
  "vmm-sys-util 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -1051,7 +1050,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum unicode-xid 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "f7fe0bb3479651439c9112f72b6c505038574c9fbb575ed1bf3b797fa39dd564"
 "checksum versionize 0.1.0 (git+https://github.com/firecracker-microvm/versionize?tag=v0.1.0)" = "<none>"
 "checksum versionize_derive 0.1.0 (git+https://github.com/firecracker-microvm/versionize_derive?tag=v0.1.0)" = "<none>"
-"checksum vhost 0.1.0 (git+ssh://git@git.ucloudadmin.com/torpedo/vhost.git?branch=fea-ucloud_ext-200608)" = "<none>"
 "checksum vm-memory 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "41fb10d355a0de221e0524cb18491d3dc6e2a0981747f75fd0a3a12109f1712f"
 "checksum vmm-sys-util 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)" = "183d25b56a61a6f518ef464ac578e790f04added34dfaab59a453d8a03cb7bd0"
 "checksum walkdir 2.3.1 (registry+https://github.com/rust-lang/crates.io-index)" = "777182bc735b6424e1a57516d35ed72cb8019d85c8c9bf536dccb3445c1a2f7d"

@@ -29,7 +29,7 @@ use std::os::unix::io::AsRawFd;
 use virtio_gen::virtio_net::{
     virtio_net_hdr_v1, VIRTIO_F_VERSION_1, VIRTIO_NET_F_CSUM, VIRTIO_NET_F_GUEST_CSUM,
     VIRTIO_NET_F_GUEST_TSO4, VIRTIO_NET_F_GUEST_UFO, VIRTIO_NET_F_HOST_TSO4, VIRTIO_NET_F_HOST_UFO,
-    VIRTIO_NET_F_MAC,
+    VIRTIO_NET_F_MAC, VIRTIO_NET_F_MRG_RXBUF
 };
 
 use vhost_aaa::vhost_kern::net::VhostNet;
@@ -75,7 +75,11 @@ impl VhostNetDevice {
         tap.set_vnet_hdr_size(vnet_hdr_size)
             .map_err(Error::TapSetVnetHdrSize)?;
 
-        let mut avail_features = 1 << VIRTIO_F_VERSION_1;
+        let mut avail_features = 1 << VIRTIO_F_VERSION_1
+        | 1 << VIRTIO_NET_F_CSUM
+        | 1 << VIRTIO_NET_F_HOST_TSO4
+        | 1 << VIRTIO_NET_F_HOST_UFO
+        | 1 << VIRTIO_NET_F_MRG_RXBUF;
 
         let mut config_space = ConfigSpace::default();
         if let Some(mac) = guest_mac {
@@ -159,10 +163,12 @@ impl VirtioDevice for VhostNetDevice {
     }
 
     fn acked_features(&self) -> u64 {
+        println!("FUCK acked_features: {}", self.acked_features);
         self.acked_features
     }
 
     fn set_acked_features(&mut self, acked_features: u64) {
+        println!("FUCK set_acked_features: {}", acked_features);
         self.acked_features = acked_features;
     }
 
@@ -209,6 +215,17 @@ impl VirtioDevice for VhostNetDevice {
         //     error!("Net: Cannot write to activate_evt");
         //     return Err(super::super::ActivateError::BadActivate);
         // }
+        const VIRTIO_NET_F_MRG_RXBUF: u32 =	15;
+        const VIRTIO_F_NOTIFY_ON_EMPTY: u32 =	24;
+        const VHOST_F_LOG_ALL:u32 = 26;
+        const VHOST_NET_F_VIRTIO_NET_HDR: u32 = 27;
+        const VIRTIO_F_ANY_LAYOUT: u32 =		27;
+        const VIRTIO_RING_F_INDIRECT_DESC:u32 =	28;
+        const VIRTIO_RING_F_EVENT_IDX: u32 =		29;
+        const VIRTIO_F_IOMMU_PLATFORM: u32 = 33;
+        const VIRTIO_F_RING_PACKED: u32 =		34;
+        const VIRTIO_F_VERSION_1: u32 =		32;
+
 
         let mut backend = VhostNet::new().or(Err(ActivateError::BadActivate))?;
 
@@ -216,7 +233,11 @@ impl VirtioDevice for VhostNetDevice {
         let backend_features = backend.get_features().or(Err(ActivateError::BadActivate))?;
         println!("FUCK {}", backend_features);
 
-        let ffff = backend_features & !(1u64 << 33 | 1u64 << 27);
+        // let ffff = backend_features & !(1u64 << 33 | 1u64 << 27);
+        let ffff = backend_features & (
+            1 << VIRTIO_NET_F_MRG_RXBUF
+            | 1 << VIRTIO_F_VERSION_1
+        );
 
         backend
             .set_features(ffff)

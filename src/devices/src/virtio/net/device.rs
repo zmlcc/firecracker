@@ -33,6 +33,7 @@ use virtio_gen::virtio_net::{
     VIRTIO_NET_F_MAC,
 };
 use vm_memory::{ByteValued, Bytes, GuestAddress, GuestMemoryError, GuestMemoryMmap};
+use vm_memory::GuestMemory;
 
 fn vnet_hdr_len() -> usize {
     mem::size_of::<virtio_net_hdr_v1>()
@@ -522,44 +523,106 @@ impl Net {
             // }
 
             read_count = 0;
+            match self.mmds_ns.as_mut() {
+                Some(ns) => unimplemented!(),
+                _ => {
+                    let mut frame_num = 0;
+                    let mut frame_len = 0;
+                    let mut segments = vec![];
+                    for (desc_addr, desc_len) in self.tx_iovec.drain(..) {
+                        frame_len += desc_len;
+
+                        // // read src MAC
+                        // if frame_num == 0 {
+                        //     if let Some(mac) = self.guest_mac {
+                        //         let mut src_mac: [u8; 6] = [0; 6];
+                        //         let read_result = self.mem.read_slice_at_addr(
+                        //             &mut src_mac,
+                        //             desc_addr.unchecked_add(vnet_hdr_len() + 6),
+                        //         );
+                        //         match read_result {
+                        //             Ok(_) => {
+                        //                 if mac != MacAddr::from_bytes_unchecked(&src_mac) {
+                        //                     METRICS.net.tx_spoofed_mac_count.inc();
+                        //                     warn!("tx_spoofed_mac_count");
+                        //                 }
+                        //             }
+                        //             Err(e) => {
+                        //                 error!("Failed to read src mac: {:?}", e);
+                        //                 METRICS.net.tx_fails.inc();
+                        //                 break;
+                        //             }
+                        //         }
+                        //     }
+                        // }
+
+                        let maybe_ptr = mem.get_host_address(desc_addr);
+                        match maybe_ptr {
+                            Ok(ptr) => segments.push(libc::iovec {
+                                iov_base: ptr as *mut libc::c_void,
+                                iov_len: desc_len,
+                            }),
+                            Err(e) => {
+                                error!("Failed to get host addr: {:?}", e);
+                                METRICS.net.tx_fails.inc();
+                                break;
+                            }
+                        }
+
+                        frame_num += 1;
+                    }
+
+                    match self.tap.writev(&segments) {
+                        Ok(_) => {
+                            METRICS.net.tx_bytes_count.add(frame_len);
+                            METRICS.net.tx_packets_count.inc();
+                            METRICS.net.tx_count.inc();
+                        }
+                        Err(e) => {
+                            error!("Failed to write to tap: {:?}", e);
+                            METRICS.net.tx_fails.inc();
+                        }
+                    };
+                }
+            }
             // Copy buffer from across multiple descriptors.
             // TODO(performance - Issue #420): change this to use `writev()` instead of `write()`
             // and get rid of the intermediate buffer.
-            for (desc_addr, desc_len) in self.tx_iovec.drain(..) {
-                let limit = cmp::min((read_count + desc_len) as usize, self.tx_frame_buf.len());
+            // for (desc_addr, desc_len) in self.tx_iovec.drain(..) {
+            //     let limit = cmp::min((read_count + desc_len) as usize, self.tx_frame_buf.len());
 
-                let read_result = mem.read_slice(
-                    &mut self.tx_frame_buf[read_count..limit as usize],
-                    desc_addr,
-                );
-                match read_result {
-                    Ok(()) => {
-                        read_count += limit - read_count;
-                        METRICS.net.tx_count.inc();
-                    }
-                    Err(e) => {
-                        error!("Failed to read slice: {:?}", e);
-                        METRICS.net.tx_fails.inc();
-                        if let GuestMemoryError::PartialBuffer { completed, .. } = e {
-                            read_count += completed;
-                        }
-                        break;
-                    }
-                }
-            }
+            //     let read_result = mem.read_slice(
+            //         &mut self.tx_frame_buf[read_count..limit as usize],
+            //         desc_addr,
+            //     );
+            //     match read_result {
+            //         Ok(()) => {
+            //             read_count += limit - read_count;
+            //             METRICS.net.tx_count.inc();
+            //         }
+            //         Err(e) => {
+            //             error!("Failed to read slice: {:?}", e);
+            //             METRICS.net.tx_fails.inc();
+            //             if let GuestMemoryError::PartialBuffer { completed, .. } = e {
+            //                 read_count += completed;
+            //             }
+            //             break;
+            //         }
+            //     }
+            // }
 
-            let frame_consumed_by_mmds = Self::write_to_mmds_or_tap(
-                self.mmds_ns.as_mut(),
-                &mut self.tx_rate_limiter,
-                &self.tx_frame_buf[..read_count],
-                &mut self.tap,
-                self.guest_mac,
-            )
-            .unwrap_or_else(|_| false);
-            if frame_consumed_by_mmds && !self.rx_deferred_frame {
-                // MMDS consumed this frame/request, let's also try to process the response.
-                process_rx_for_mmds = true;
-            }
+            // let frame_consumed_by_mmds = Self::write_to_mmds_or_tap(
+            //     self.mmds_ns.as_mut(),
+            //     &mut self.tx_rate_limiter,
+            //     &self.tx_frame_buf[..read_count],
+            //     &mut self.tap,
+            //     self.guest_mac,
+            // )
+            // .unwrap_or_else(|_| false);
+            // if frame_consumed_by_mmds && !self.rx_deferred_frame {
+            //     // MMDS consumed this frame/request, let's also try to process the response.
+            //     process_rx_for_mmds = true;
+            // }
 
             tx_queue.add_used(mem, head_index, 0);
             raise_irq = true;

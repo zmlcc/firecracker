@@ -200,6 +200,23 @@ impl Tap {
 
         ifreq
     }
+
+    /// write iovec
+    pub fn writev(&mut self, iovec: &Vec<libc::iovec>) -> IoResult<usize> {
+        let ret = unsafe {
+            libc::writev(
+                self.tap_file.as_raw_fd(),
+                iovec.as_ptr() as *const libc::iovec,
+                iovec.len() as i32,
+            )
+        };
+
+        if ret > 0 {
+            Ok(ret as usize)
+        } else {
+            Err(IoError::last_os_error())
+        }
+    }
 }
 
 impl Read for Tap {

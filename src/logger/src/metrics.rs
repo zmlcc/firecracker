@@ -422,6 +422,12 @@ pub struct NetDeviceMetrics {
     pub no_rx_avail_buffer: SharedMetric,
     /// No available buffer for the net device tx queue.
     pub no_tx_avail_buffer: SharedMetric,
+    /// Process tx count.
+    pub process_tx_count: SharedMetric,
+    /// empty tx queue count.
+    pub empty_tx_queue_count: SharedMetric,
+    /// Trigger tx signal.
+    pub trigger_tx_signal_count: SharedMetric,
     /// Number of times when handling events on a network device failed.
     pub event_fails: SharedMetric,
     /// Number of events associated with the receiving queue.

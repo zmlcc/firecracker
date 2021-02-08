@@ -357,6 +357,17 @@ impl Queue {
         let addr = self.avail_ring.unchecked_add(2);
         Wrapping(mem.read_obj::<u16>(addr).unwrap())
     }
+
+    /// Change flags in the used ring
+    pub fn enable_notification(&self, mem: &GuestMemoryMmap, enable: bool){
+        let flag: u16 = if enable {
+            0
+        } else{
+            1
+        };
+        mem.write_obj(flag, self.used_ring).unwrap();
+        fence(Ordering::Release);
+    }
 }
 
 #[cfg(test)]

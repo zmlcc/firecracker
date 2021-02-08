@@ -463,6 +463,7 @@ impl Net {
     }
 
     fn process_tx(&mut self) -> result::Result<(), DeviceError> {
+        METRICS.net.process_tx_count.inc();
         let mem = match self.device_state {
             DeviceState::Activated(ref mem) => mem,
             // This should never happen, it's been already validated in the event handler.
@@ -477,15 +478,20 @@ impl Net {
         let mut raise_irq = false;
         let tx_queue = &mut self.queues[TX_INDEX];
 
+        if tx_queue.len(mem) == 0 {
+            METRICS.net.empty_tx_queue_count.inc();
+        }
+
+        tx_queue.enable_notification(mem, false);
         while let Some(head) = tx_queue.pop(mem) {
             // If limiter.consume() fails it means there is no more TokenType::Ops
             // budget and rate limiting is in effect.
-            if !self.tx_rate_limiter.consume(1, TokenType::Ops) {
-                // Stop processing the queue and return this descriptor chain to the
-                // avail ring, for later processing.
-                tx_queue.undo_pop();
-                break;
-            }
+            // if !self.tx_rate_limiter.consume(1, TokenType::Ops) {
+            //     // Stop processing the queue and return this descriptor chain to the
+            //     // avail ring, for later processing.
+            //     tx_queue.undo_pop();
+            //     break;
+            // }
 
             let head_index = head.index;
             let mut read_count = 0;
@@ -503,17 +509,17 @@ impl Net {
 
             // If limiter.consume() fails it means there is no more TokenType::Bytes
             // budget and rate limiting is in effect.
-            if !self
-                .tx_rate_limiter
-                .consume(read_count as u64, TokenType::Bytes)
-            {
-                // revert the OPS consume()
-                self.tx_rate_limiter.manual_replenish(1, TokenType::Ops);
-                // Stop processing the queue and return this descriptor chain to the
-                // avail ring, for later processing.
-                tx_queue.undo_pop();
-                break;
-            }
+            // if !self
+            //     .tx_rate_limiter
+            //     .consume(read_count as u64, TokenType::Bytes)
+            // {
+            //     // revert the OPS consume()
+            //     self.tx_rate_limiter.manual_replenish(1, TokenType::Ops);
+            //     // Stop processing the queue and return this descriptor chain to the
+            //     // avail ring, for later processing.
+            //     tx_queue.undo_pop();
+            //     break;
+            // }
 
             read_count = 0;
             // Copy buffer from across multiple descriptors.
@@ -558,8 +564,10 @@ impl Net {
             tx_queue.add_used(mem, head_index, 0);
             raise_irq = true;
         }
+        tx_queue.enable_notification(mem, true);
 
         if raise_irq {
+            METRICS.net.trigger_tx_signal_count.inc();
             self.signal_used_queue()?;
         } else {
             METRICS.net.no_tx_avail_buffer.inc();

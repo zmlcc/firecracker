@@ -483,7 +483,7 @@ impl Net {
         let tx_queue = &mut self.queues[TX_INDEX];
         
         tx_queue.enable_notification(mem, false);
-        
+
         if tx_queue.len(mem) == 0 {
             METRICS.net.empty_tx_queue_count.inc();
         }
@@ -724,14 +724,21 @@ impl Net {
 
     pub fn process_tx_queue_event(&mut self) {
         METRICS.net.tx_queue_event_count.inc();
-        if let Err(e) = self.queue_evts[TX_INDEX].read() {
-            error!("Failed to get tx queue event: {:?}", e);
-            METRICS.net.event_fails.inc();
-        } else if !self.tx_rate_limiter.is_blocked()
-        // If the limiter is not blocked, continue transmitting bytes.
-        {
-            self.process_tx().unwrap_or_else(report_net_event_fail);
+        loop {
+            match self.queue_evts[TX_INDEX].read() {
+                Err(_) => break,
+                _ => {},
+            }
         }
+        self.process_tx().unwrap_or_else(report_net_event_fail);
+        // if let Err(e) = self.queue_evts[TX_INDEX].read() {
+        //     error!("Failed to get tx queue event: {:?}", e);
+        //     METRICS.net.event_fails.inc();
+        // } else if !self.tx_rate_limiter.is_blocked()
+        // // If the limiter is not blocked, continue transmitting bytes.
+        // {
+        //     self.process_tx().unwrap_or_else(report_net_event_fail);
+        // }
     }
 
     pub fn process_rx_rate_limiter_event(&mut self) {

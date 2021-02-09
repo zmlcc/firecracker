@@ -32,8 +32,8 @@ use virtio_gen::virtio_net::{
     VIRTIO_NET_F_GUEST_TSO4, VIRTIO_NET_F_GUEST_UFO, VIRTIO_NET_F_HOST_TSO4, VIRTIO_NET_F_HOST_UFO,
     VIRTIO_NET_F_MAC,
 };
-use vm_memory::{ByteValued, Bytes, GuestAddress, GuestMemoryError, GuestMemoryMmap};
 use vm_memory::GuestMemory;
+use vm_memory::{ByteValued, Bytes, GuestAddress, GuestMemoryError, GuestMemoryMmap};
 
 fn vnet_hdr_len() -> usize {
     mem::size_of::<virtio_net_hdr_v1>()
@@ -116,6 +116,8 @@ pub struct Net {
 
     pub(crate) mmds_ns: Option<MmdsNetworkStack>,
 
+    defer_tx_count: usize,
+
     #[cfg(test)]
     test_mutators: tests::TestMutators,
 }
@@ -194,6 +196,7 @@ impl Net {
             mmds_ns,
             guest_mac: guest_mac.copied(),
 
+            defer_tx_count: 0,
             #[cfg(test)]
             test_mutators: tests::TestMutators::default(),
         })
@@ -485,6 +488,7 @@ impl Net {
 
         tx_queue.enable_notification(mem, false);
         while let Some(head) = tx_queue.pop(mem) {
+            self.defer_tx_count += 1;
             // If limiter.consume() fails it means there is no more TokenType::Ops
             // budget and rate limiting is in effect.
             // if !self.tx_rate_limiter.consume(1, TokenType::Ops) {
@@ -630,8 +634,13 @@ impl Net {
         tx_queue.enable_notification(mem, true);
 
         if raise_irq {
-            METRICS.net.trigger_tx_signal_count.inc();
-            self.signal_used_queue()?;
+            if tx_queue.should_interrupt(mem) & (self.defer_tx_count > 50) {
+                METRICS.net.trigger_tx_signal_count.inc();
+                self.defer_tx_count = 0;
+                self.signal_used_queue()?;
+            } else {
+                METRICS.net.skip_trigger_tx_signal_count.inc();
+            }
         } else {
             METRICS.net.no_tx_avail_buffer.inc();
         }
@@ -786,6 +795,7 @@ impl VirtioDevice for Net {
     }
 
     fn acked_features(&self) -> u64 {
+        println!("FUCK WHAT acked_features {}", self.acked_features);
         self.acked_features
     }
 

@@ -359,14 +359,16 @@ impl Queue {
     }
 
     /// Change flags in the used ring
-    pub fn enable_notification(&self, mem: &GuestMemoryMmap, enable: bool){
-        let flag: u16 = if enable {
-            0
-        } else{
-            1
-        };
+    pub fn enable_notification(&self, mem: &GuestMemoryMmap, enable: bool) {
+        let flag: u16 = if enable { 0 } else { 1 };
         mem.write_obj(flag, self.used_ring).unwrap();
         fence(Ordering::Release);
+    }
+
+    /// Get flags in the avail ring
+    pub fn should_interrupt(&self, mem: &GuestMemoryMmap) -> bool {
+        let flag = mem.read_obj::<u16>(self.avail_ring).unwrap();
+        (flag & 1u16) == 0u16
     }
 }
 

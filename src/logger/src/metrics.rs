@@ -428,6 +428,8 @@ pub struct NetDeviceMetrics {
     pub empty_tx_queue_count: SharedMetric,
     /// Trigger tx signal.
     pub trigger_tx_signal_count: SharedMetric,
+    /// Skip Trigger tx signal.
+    pub skip_trigger_tx_signal_count: SharedMetric,
     /// Number of times when handling events on a network device failed.
     pub event_fails: SharedMetric,
     /// Number of events associated with the receiving queue.

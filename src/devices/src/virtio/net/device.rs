@@ -473,7 +473,7 @@ impl Net {
             // This should never happen, it's been already validated in the event handler.
             DeviceState::Inactive => unreachable!(),
         };
-
+        
         // The MMDS network stack works like a state machine, based on synchronous calls, and
         // without being added to any event loop. If any frame is accepted by the MMDS, we also
         // trigger a process_rx() which checks if there are any new frames to be sent, starting
@@ -481,12 +481,13 @@ impl Net {
         let mut process_rx_for_mmds = false;
         let mut raise_irq = false;
         let tx_queue = &mut self.queues[TX_INDEX];
-
+        
+        tx_queue.enable_notification(mem, false);
+        
         if tx_queue.len(mem) == 0 {
             METRICS.net.empty_tx_queue_count.inc();
         }
 
-        tx_queue.enable_notification(mem, false);
         while let Some(head) = tx_queue.pop(mem) {
             self.defer_tx_count += 1;
             // If limiter.consume() fails it means there is no more TokenType::Ops
@@ -634,12 +635,14 @@ impl Net {
         tx_queue.enable_notification(mem, true);
 
         if raise_irq {
-            if tx_queue.should_interrupt(mem) & (self.defer_tx_count > 50) {
+            if !tx_queue.should_interrupt(mem){
+                METRICS.net.skip_trigger_tx_signal_count.inc();
+            } else if self.defer_tx_count < 50 {
+                METRICS.net.defer_trigger_tx_signal_count.inc();
+            } else {
                 METRICS.net.trigger_tx_signal_count.inc();
                 self.defer_tx_count = 0;
                 self.signal_used_queue()?;
-            } else {
-                METRICS.net.skip_trigger_tx_signal_count.inc();
             }
         } else {
             METRICS.net.no_tx_avail_buffer.inc();

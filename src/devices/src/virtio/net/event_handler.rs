@@ -34,7 +34,7 @@ impl Net {
         event_manager
             .register(
                 self.queue_evts[TX_INDEX].as_raw_fd(),
-                EpollEvent::new(EventSet::IN, self.queue_evts[TX_INDEX].as_raw_fd() as u64),
+                EpollEvent::new(EventSet::IN | EventSet::EDGE_TRIGGERED , self.queue_evts[TX_INDEX].as_raw_fd() as u64),
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
